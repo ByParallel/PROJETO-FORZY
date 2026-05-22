@@ -1,12 +1,11 @@
 """
 Player / Timelapse — Dataset Forzy
 Animação Plotly nativa com Play / Pause / Scrubbing
+Seletor de variável: Velocidade | Aceleração | Temperatura
 """
 
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
 from pathlib import Path
 
@@ -28,21 +27,55 @@ def load_data(path: str) -> pd.DataFrame:
         path, sep=";", skiprows=3, header=None,
         usecols=[0, 3, 4, 5, 6, 7, 8],
         names=["timestamp", "m1_vel", "m1_acel", "m1_temp",
-                              "m2_vel", "m2_acel", "m2_temp"],
+                             "m2_vel", "m2_acel", "m2_temp"],
     )
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     for c in df.columns[1:]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna().sort_values("timestamp").reset_index(drop=True)
-    return df
+    return df.dropna().sort_values("timestamp").reset_index(drop=True)
 
 df_raw = load_data(str(csv_path))
 
+# ── Config de cada variável ────────────────────────────────────────────────────
+VARIAVEIS = {
+    "🚀 Velocidade": dict(
+        col_m1="m1_vel", col_m2="m2_vel",
+        unidade="m/s", ylabel="Velocidade (m/s)",
+        lim_alerta=3.0, lim_alarme=5.5,
+        fmt=".2f",
+        label_alerta="Alerta", label_alarme="Alarme", label_ok="Normal",
+    ),
+    "⚡ Aceleração": dict(
+        col_m1="m1_acel", col_m2="m2_acel",
+        unidade="m/s²", ylabel="Aceleração (m/s²)",
+        lim_alerta=0.25, lim_alarme=0.45,
+        fmt=".3f",
+        label_alerta="Alerta", label_alarme="Alarme", label_ok="Normal",
+    ),
+    "🌡️ Temperatura": dict(
+        col_m1="m1_temp", col_m2="m2_temp",
+        unidade="°C", ylabel="Temperatura (°C)",
+        lim_alerta=35.0, lim_alarme=42.0,
+        fmt=".1f",
+        label_alerta="Atenção", label_alarme="Crítico", label_ok="Normal",
+    ),
+}
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
-st.sidebar.header("⏱ Configurações do Player")
+st.sidebar.header("⏱ Player")
+
+# Seletor de variável em destaque
+variavel_sel = st.sidebar.radio(
+    "📦 Variável",
+    list(VARIAVEIS.keys()),
+    index=0,
+)
+cfg = VARIAVEIS[variavel_sel]
+
+st.sidebar.divider()
 
 frame_interval = st.sidebar.select_slider(
-    "Intervalo por frame (dados reais)",
+    "Intervalo por frame",
     options=["5s", "10s", "15s", "30s", "1min", "2min", "5min"],
     value="30s",
 )
@@ -54,92 +87,98 @@ speed_ms = st.sidebar.select_slider(
 )
 transition_ms = min(speed_ms - 30, 80) if speed_ms > 80 else 0
 
-VEL_ALERTA  = st.sidebar.number_input("Vel. alerta (m/s)", value=3.0, step=0.5)
-VEL_ALARME  = st.sidebar.number_input("Vel. alarme (m/s)", value=5.5, step=0.5)
+st.sidebar.divider()
+lim_alerta = st.sidebar.number_input(
+    f"Limiar alerta ({cfg['unidade']})", value=cfg["lim_alerta"], step=0.1, format="%.2f"
+)
+lim_alarme = st.sidebar.number_input(
+    f"Limiar alarme ({cfg['unidade']})", value=cfg["lim_alarme"], step=0.1, format="%.2f"
+)
 
-motores = st.sidebar.multiselect("Mostrar", ["Motor 1", "Motor 2"],
-                                  default=["Motor 1", "Motor 2"])
+motores = st.sidebar.multiselect(
+    "Motores", ["Motor 1", "Motor 2"], default=["Motor 1", "Motor 2"]
+)
 
-# ── Resample para frames ────────────────────────────────────────────────────────
+# ── Resample ───────────────────────────────────────────────────────────────────
 freq_map = {"5s":"5s","10s":"10s","15s":"15s","30s":"30s",
             "1min":"1min","2min":"2min","5min":"5min"}
-freq = freq_map[frame_interval]
 
 df = (df_raw.set_index("timestamp")
-            .resample(freq).mean()
+            .resample(freq_map[frame_interval]).mean()
             .dropna(how="all")
             .reset_index())
 
-# Timestamps dos frames (máx 300 para não travar o browser)
-timestamps = df["timestamp"].tolist()
-if len(timestamps) > 300:
-    step = len(timestamps) // 300
-    timestamps = timestamps[::step]
-    df = df[df["timestamp"].isin(timestamps)].reset_index(drop=True)
+if len(df) > 300:
+    step = len(df) // 300
+    df = df.iloc[::step].reset_index(drop=True)
 
-N = len(df)
-
-st.title("▶ Player — Timelapse Operacional")
-st.caption(f"{N} frames  ·  {df['timestamp'].min().strftime('%H:%M:%S')} → "
-           f"{df['timestamp'].max().strftime('%H:%M:%S')}  ·  "
-           f"intervalo {frame_interval}")
-
-# ── Cores e helpers ────────────────────────────────────────────────────────────
+N   = len(df)
+COL_M1 = cfg["col_m1"]
+COL_M2 = cfg["col_m2"]
+Y_MAX  = max(df[COL_M1].max(), df[COL_M2].max()) * 1.15
 COR_M1, COR_M2 = "#3498db", "#e74c3c"
-VEL_MAX = max(df["m1_vel"].max(), df["m2_vel"].max()) * 1.15
 
-def vel_color(v):
-    if v >= VEL_ALARME: return "#e74c3c"
-    if v >= VEL_ALERTA: return "#f39c12"
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.title("▶ Player — Timelapse Operacional")
+
+# Chips da variável selecionada
+col_chips = st.columns(len(VARIAVEIS))
+for i, (nome, _) in enumerate(VARIAVEIS.items()):
+    selecionado = nome == variavel_sel
+    cor = "#3498db" if selecionado else "#333"
+    borda = "2px solid #3498db" if selecionado else "1px solid #555"
+    col_chips[i].markdown(
+        f"""<div style="text-align:center;padding:8px 0;border-radius:8px;
+        border:{borda};background:{cor};color:white;font-weight:{'bold' if selecionado else 'normal'};
+        font-size:0.95rem;">{nome}</div>""",
+        unsafe_allow_html=True,
+    )
+
+st.markdown("")
+st.caption(
+    f"{N} frames  ·  {df['timestamp'].min().strftime('%H:%M:%S')} → "
+    f"{df['timestamp'].max().strftime('%H:%M:%S')}  ·  intervalo {frame_interval}"
+)
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def ponto_cor(v):
+    if v >= lim_alarme: return "#e74c3c"
+    if v >= lim_alerta: return "#f39c12"
     return "#2ecc71"
 
-# ── Constrói frames da animação ───────────────────────────────────────────────
-frames = []
-slider_steps = []
+def hover_fmt(nome, v, unidade, fmt):
+    return f"<b>{nome}</b>: {v:{fmt}} {unidade}<extra></extra>"
+
+# ── Frames ─────────────────────────────────────────────────────────────────────
+frames, slider_steps = [], []
 
 for i in range(1, N + 1):
-    sub = df.iloc[:i]
+    sub  = df.iloc[:i]
     last = sub.iloc[-1]
-
     traces = []
 
-    # Faixas de zona (invisíveis nos frames — já estão no layout)
-    # Motor 1 velocidade
-    if "Motor 1" in motores:
+    for col, nome, cor, grp in [
+        (COL_M1, "Motor 1", COR_M1, "m1"),
+        (COL_M2, "Motor 2", COR_M2, "m2"),
+    ]:
+        if nome not in motores:
+            continue
         traces.append(go.Scatter(
-            x=sub["timestamp"], y=sub["m1_vel"],
-            mode="lines", line=dict(color=COR_M1, width=2),
-            name="M1 Velocidade", legendgroup="m1",
-            hovertemplate="M1: %{y:.2f} m/s<extra></extra>",
+            x=sub["timestamp"], y=sub[col],
+            mode="lines", line=dict(color=cor, width=2),
+            name=nome, legendgroup=grp,
+            hovertemplate=hover_fmt(nome, last[col], cfg["unidade"], cfg["fmt"]),
         ))
-        # Ponto atual
         traces.append(go.Scatter(
-            x=[last["timestamp"]], y=[last["m1_vel"]],
+            x=[last["timestamp"]], y=[last[col]],
             mode="markers",
-            marker=dict(color=vel_color(last["m1_vel"]), size=12,
+            marker=dict(color=ponto_cor(last[col]), size=13,
                         line=dict(color="white", width=2)),
-            name="M1 atual", legendgroup="m1", showlegend=False,
-            hovertemplate="M1 agora: %{y:.2f} m/s<extra></extra>",
-        ))
-
-    # Motor 2 velocidade
-    if "Motor 2" in motores:
-        traces.append(go.Scatter(
-            x=sub["timestamp"], y=sub["m2_vel"],
-            mode="lines", line=dict(color=COR_M2, width=2),
-            name="M2 Velocidade", legendgroup="m2",
-            hovertemplate="M2: %{y:.2f} m/s<extra></extra>",
-        ))
-        traces.append(go.Scatter(
-            x=[last["timestamp"]], y=[last["m2_vel"]],
-            mode="markers",
-            marker=dict(color=vel_color(last["m2_vel"]), size=12,
-                        line=dict(color="white", width=2)),
-            name="M2 atual", legendgroup="m2", showlegend=False,
+            legendgroup=grp, showlegend=False,
+            hovertemplate=hover_fmt(f"{nome} agora", last[col], cfg["unidade"], cfg["fmt"]),
         ))
 
     frames.append(go.Frame(data=traces, name=str(i)))
-
     slider_steps.append(dict(
         args=[[str(i)], {"frame": {"duration": speed_ms, "redraw": True},
                          "mode": "immediate",
@@ -148,118 +187,84 @@ for i in range(1, N + 1):
         method="animate",
     ))
 
-# ── Figura inicial (frame 1) ───────────────────────────────────────────────────
-first = df.iloc[:1]
-last0 = df.iloc[0]
-
+# ── Traços iniciais ────────────────────────────────────────────────────────────
+first, last0 = df.iloc[:1], df.iloc[0]
 init_traces = []
-if "Motor 1" in motores:
+for col, nome, cor, grp in [
+    (COL_M1, "Motor 1", COR_M1, "m1"),
+    (COL_M2, "Motor 2", COR_M2, "m2"),
+]:
+    if nome not in motores:
+        continue
     init_traces += [
-        go.Scatter(x=first["timestamp"], y=first["m1_vel"],
-                   mode="lines", line=dict(color=COR_M1, width=2),
-                   name="Motor 1", legendgroup="m1"),
-        go.Scatter(x=[last0["timestamp"]], y=[last0["m1_vel"]],
+        go.Scatter(x=first["timestamp"], y=first[col],
+                   mode="lines", line=dict(color=cor, width=2),
+                   name=nome, legendgroup=grp),
+        go.Scatter(x=[last0["timestamp"]], y=[last0[col]],
                    mode="markers",
-                   marker=dict(color=vel_color(last0["m1_vel"]), size=12,
+                   marker=dict(color=ponto_cor(last0[col]), size=13,
                                line=dict(color="white", width=2)),
-                   name="M1 atual", legendgroup="m1", showlegend=False),
-    ]
-if "Motor 2" in motores:
-    init_traces += [
-        go.Scatter(x=first["timestamp"], y=first["m2_vel"],
-                   mode="lines", line=dict(color=COR_M2, width=2),
-                   name="Motor 2", legendgroup="m2"),
-        go.Scatter(x=[last0["timestamp"]], y=[last0["m2_vel"]],
-                   mode="markers",
-                   marker=dict(color=vel_color(last0["m2_vel"]), size=12,
-                               line=dict(color="white", width=2)),
-                   name="M2 atual", legendgroup="m2", showlegend=False),
+                   legendgroup=grp, showlegend=False),
     ]
 
-# ── Layout com botões Play/Pause e slider ─────────────────────────────────────
+# ── Layout ─────────────────────────────────────────────────────────────────────
 layout = go.Layout(
-    height=520,
-    xaxis=dict(
-        title="Tempo",
-        range=[df["timestamp"].min(), df["timestamp"].max()],
-        type="date",
-    ),
-    yaxis=dict(
-        title="Velocidade (m/s)",
-        range=[0, VEL_MAX],
-    ),
+    height=500,
+    xaxis=dict(title="Tempo",
+               range=[df["timestamp"].min(), df["timestamp"].max()],
+               type="date"),
+    yaxis=dict(title=cfg["ylabel"], range=[0, Y_MAX]),
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    margin=dict(l=50, r=20, t=60, b=120),
+    margin=dict(l=60, r=20, t=70, b=130),
 
-    # Faixas ISO de fundo
     shapes=[
         dict(type="rect", xref="paper", x0=0, x1=1,
-             yref="y", y0=0, y1=VEL_ALERTA,
-             fillcolor="#2ecc71", opacity=0.06, line_width=0),
+             yref="y", y0=0, y1=lim_alerta,
+             fillcolor="#2ecc71", opacity=0.07, line_width=0),
         dict(type="rect", xref="paper", x0=0, x1=1,
-             yref="y", y0=VEL_ALERTA, y1=VEL_ALARME,
-             fillcolor="#f39c12", opacity=0.06, line_width=0),
+             yref="y", y0=lim_alerta, y1=lim_alarme,
+             fillcolor="#f39c12", opacity=0.07, line_width=0),
         dict(type="rect", xref="paper", x0=0, x1=1,
-             yref="y", y0=VEL_ALARME, y1=VEL_MAX,
-             fillcolor="#e74c3c", opacity=0.06, line_width=0),
+             yref="y", y0=lim_alarme, y1=Y_MAX,
+             fillcolor="#e74c3c", opacity=0.07, line_width=0),
     ],
     annotations=[
-        dict(xref="paper", x=0.01, yref="y", y=VEL_ALERTA/2,
-             text="Normal", showarrow=False, font=dict(color="#2ecc71", size=11)),
-        dict(xref="paper", x=0.01, yref="y", y=(VEL_ALERTA+VEL_ALARME)/2,
-             text="Alerta", showarrow=False, font=dict(color="#f39c12", size=11)),
-        dict(xref="paper", x=0.01, yref="y", y=VEL_ALARME+(VEL_MAX-VEL_ALARME)/2,
-             text="Alarme", showarrow=False, font=dict(color="#e74c3c", size=11)),
+        dict(xref="paper", x=0.01, yref="y", y=lim_alerta / 2,
+             text=cfg["label_ok"], showarrow=False,
+             font=dict(color="#2ecc71", size=11)),
+        dict(xref="paper", x=0.01, yref="y", y=(lim_alerta + lim_alarme) / 2,
+             text=cfg["label_alerta"], showarrow=False,
+             font=dict(color="#f39c12", size=11)),
+        dict(xref="paper", x=0.01, yref="y",
+             y=lim_alarme + (Y_MAX - lim_alarme) / 2,
+             text=cfg["label_alarme"], showarrow=False,
+             font=dict(color="#e74c3c", size=11)),
     ],
 
-    # Botões Play / Pause
     updatemenus=[dict(
-        type="buttons",
-        showactive=False,
-        y=1.18, x=0.5, xanchor="center",
+        type="buttons", showactive=False,
+        y=1.20, x=0.5, xanchor="center",
         buttons=[
-            dict(
-                label="▶  Play",
-                method="animate",
-                args=[None, {
-                    "frame": {"duration": speed_ms, "redraw": True},
-                    "fromcurrent": True,
-                    "transition": {"duration": transition_ms},
-                }],
-            ),
-            dict(
-                label="⏸  Pause",
-                method="animate",
-                args=[[None], {
-                    "frame": {"duration": 0, "redraw": False},
-                    "mode": "immediate",
-                    "transition": {"duration": 0},
-                }],
-            ),
-            dict(
-                label="⏮  Reset",
-                method="animate",
-                args=[["1"], {
-                    "frame": {"duration": 0, "redraw": True},
-                    "mode": "immediate",
-                }],
-            ),
+            dict(label="▶  Play", method="animate",
+                 args=[None, {"frame": {"duration": speed_ms, "redraw": True},
+                              "fromcurrent": True,
+                              "transition": {"duration": transition_ms}}]),
+            dict(label="⏸  Pause", method="animate",
+                 args=[[None], {"frame": {"duration": 0, "redraw": False},
+                                "mode": "immediate",
+                                "transition": {"duration": 0}}]),
+            dict(label="⏮  Reset", method="animate",
+                 args=[["1"], {"frame": {"duration": 0, "redraw": True},
+                               "mode": "immediate"}]),
         ],
-        font=dict(size=14),
-        bgcolor="#1e1e2e",
-        bordercolor="#444",
+        font=dict(size=14), bgcolor="#1e1e2e", bordercolor="#555",
     )],
 
-    # Slider de scrubbing
     sliders=[dict(
         active=0,
-        currentvalue=dict(
-            prefix="⏱ ",
-            visible=True,
-            xanchor="center",
-            font=dict(size=13),
-        ),
+        currentvalue=dict(prefix="⏱ ", visible=True,
+                          xanchor="center", font=dict(size=13)),
         pad=dict(t=50, b=10),
         len=1.0, x=0,
         steps=slider_steps,
@@ -269,13 +274,14 @@ layout = go.Layout(
 fig = go.Figure(data=init_traces, layout=layout, frames=frames)
 st.plotly_chart(fig, use_container_width=True)
 
-# ── Mini KPIs embaixo do player ────────────────────────────────────────────────
-st.markdown("---")
-st.caption("📊 Estatísticas do período completo")
+# ── KPIs dinâmicos por variável ────────────────────────────────────────────────
+st.divider()
+st.caption(f"📊 Estatísticas — {variavel_sel}")
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("M1 Vel. máx",  f"{df['m1_vel'].max():.2f} m/s")
-c2.metric("M1 Vel. média", f"{df['m1_vel'].mean():.2f} m/s")
-c3.metric("M1 Temp. máx", f"{df['m1_temp'].max():.1f} °C")
-c4.metric("M2 Vel. máx",  f"{df['m2_vel'].max():.2f} m/s")
-c5.metric("M2 Vel. média", f"{df['m2_vel'].mean():.2f} m/s")
-c6.metric("M2 Temp. máx", f"{df['m2_temp'].max():.1f} °C")
+c1.metric(f"M1 Máx",   f"{df[COL_M1].max():{cfg['fmt']}} {cfg['unidade']}")
+c2.metric(f"M1 Média", f"{df[COL_M1].mean():{cfg['fmt']}} {cfg['unidade']}")
+c3.metric(f"M1 Desvio",f"{df[COL_M1].std():{cfg['fmt']}} {cfg['unidade']}")
+c4.metric(f"M2 Máx",   f"{df[COL_M2].max():{cfg['fmt']}} {cfg['unidade']}")
+c5.metric(f"M2 Média", f"{df[COL_M2].mean():{cfg['fmt']}} {cfg['unidade']}")
+c6.metric(f"M2 Desvio",f"{df[COL_M2].std():{cfg['fmt']}} {cfg['unidade']}")
