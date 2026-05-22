@@ -84,12 +84,17 @@ FLAG_NOME = {0:"OK", 1:"ALERTA", 2:"ALARME"}
 # ══════════════════════════════════════════════════════════════════════════════
 # Session state — player
 # ══════════════════════════════════════════════════════════════════════════════
-for k,v in [("fidx",0),("playing",False),("speed",200)]:
+for k, v in [("fidx", 0), ("playing", False), ("speed", 200)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Autorefresh SEMPRE ativo — intervalo curto quando tocando, longo quando pausado
+# Isso evita que o componente suma/reapareça e perca o estado
+_interval = st.session_state.speed if st.session_state.playing else 86_400_000
+st_autorefresh(interval=_interval, key="scada_play")
+
+# Avança frame a cada rerun causado pelo autorefresh
 if st.session_state.playing:
-    st_autorefresh(interval=st.session_state.speed, key="scada_play")
     st.session_state.fidx = min(st.session_state.fidx + 1, N - 1)
     if st.session_state.fidx >= N - 1:
         st.session_state.playing = False
@@ -119,34 +124,58 @@ st.title("🏭 SCADA — Bancada Forzy")
 
 with st.container():
     st.markdown('<div class="player-bar">', unsafe_allow_html=True)
-    pc1, pc2, pc3, pc4, pc5 = st.columns([1,1,1,4,1])
+    pc1, pc2, pc3, pc4, pc5, pc6 = st.columns([1, 1, 1, 1, 5, 1])
+
+    # ⏮ Reset — sempre habilitado
     with pc1:
-        if st.button("⏮", use_container_width=True):
+        if st.button("⏮", use_container_width=True, key="btn_reset"):
             st.session_state.fidx = 0
             st.session_state.playing = False
+            st.rerun()
+
+    # ▶ Play — desabilitado se já tocando
     with pc2:
-        if st.session_state.playing:
-            if st.button("⏸", use_container_width=True):
-                st.session_state.playing = False
-        else:
-            if st.button("▶", use_container_width=True):
-                if st.session_state.fidx >= N-1:
-                    st.session_state.fidx = 0
-                st.session_state.playing = True
+        if st.button("▶", use_container_width=True, key="btn_play",
+                     disabled=st.session_state.playing):
+            if st.session_state.fidx >= N - 1:
+                st.session_state.fidx = 0
+            st.session_state.playing = True
+            st.rerun()
+
+    # ⏸ Pause — desabilitado se pausado
     with pc3:
-        spd = st.selectbox("", [50,100,200,300,500],
-                           index=2, format_func=lambda x: f"{x}ms",
-                           label_visibility="collapsed")
-        st.session_state.speed = spd
-    with pc4:
-        new_idx = st.slider("", 0, N-1, st.session_state.fidx,
-                            label_visibility="collapsed", key="slider_main")
-        if new_idx != st.session_state.fidx:
-            st.session_state.fidx = new_idx
+        if st.button("⏸", use_container_width=True, key="btn_pause",
+                     disabled=not st.session_state.playing):
             st.session_state.playing = False
+            st.rerun()
+
+    # Velocidade
+    with pc4:
+        spd = st.selectbox("", [50, 100, 200, 300, 500],
+                           index=[50,100,200,300,500].index(
+                               st.session_state.speed)
+                               if st.session_state.speed in [50,100,200,300,500] else 2,
+                           format_func=lambda x: f"{x} ms",
+                           label_visibility="collapsed", key="sel_speed")
+        st.session_state.speed = spd
+
+    # Slider — sem key para que value= sempre seja respeitado
     with pc5:
-        st.markdown(f"<div style='color:#aaa;font-size:.85rem;padding-top:8px'>"
-                    f"{row['ts'].strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
+        slider_val = st.slider("", 0, N - 1,
+                               value=st.session_state.fidx,
+                               label_visibility="collapsed")
+        # Só atualiza fidx a partir do slider se o usuário arrastou (não playing)
+        if not st.session_state.playing and slider_val != st.session_state.fidx:
+            st.session_state.fidx = slider_val
+            st.rerun()
+
+    # Timestamp atual
+    with pc6:
+        st.markdown(
+            f"<div style='color:#aaa;font-size:.82rem;padding-top:8px;text-align:center'>"
+            f"⏱<br>{row['ts'].strftime('%H:%M:%S')}</div>",
+            unsafe_allow_html=True)
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -337,10 +366,10 @@ with tab2d:
           10,"#888")
 
     # Legenda
-    for lx, cor, txt in [(0.7,0.8,"#2ecc71","OK"),
-                          (3.2,0.8,"#f39c12","Alerta"),
-                          (5.7,0.8,"#e74c3c","Alarme"),
-                          (8.5,0.8,"#8e44ad","Sensor")]:
+    for lx, cor, txt in [(0.7,"#2ecc71","OK"),
+                          (3.2,"#f39c12","Alerta"),
+                          (5.7,"#e74c3c","Alarme"),
+                          (8.5,"#8e44ad","Sensor")]:
         fig2.add_shape(type="rect",x0=lx,y0=0.4,x1=lx+.5,y1=1.2,
                        fillcolor=cor,line=dict(color="#111",width=1))
         label(lx+1.0,0.8,txt,9,"#ccc","left")
