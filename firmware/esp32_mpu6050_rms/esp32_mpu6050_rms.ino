@@ -10,7 +10,7 @@
  *   - ElectronicCats/MPU6050  (ou jrowberg/i2cdevlib MPU6050)
  *   - arduinoFFT  (opcional — habilite #define USE_FFT abaixo)
  *
- * Conexões ESP32 ↔ MPU6050:
+ * Conexões ESP32-CAM AI Thinker ↔ MPU6050:
  *   3.3V → VCC,  GND → GND,  GPIO21 → SDA,  GPIO22 → SCL
  */
 
@@ -85,17 +85,19 @@ float fftDominantFreq(float* buf, uint16_t n) {
 // ── Setup ──────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Wire.begin();
+  Wire.begin(21, 22);  // SDA=GPIO21, SCL=GPIO22 (explícito para ESP32-CAM)
   mpu.initialize();
   mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);   // ±4g → LSB = 8192
   mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);   // ±250°/s → LSB = 131
 
-  // DLPF 44 Hz → permite capturar até ~22 Hz de vibração sem aliasing
-  mpu.setDLPFMode(MPU6050_DLPF_BW_44);
+  // DLPF 42 Hz → permite capturar até ~21 Hz de vibração sem aliasing
+  mpu.setDLPFMode(MPU6050_DLPF_BW_42);
 
   if (!mpu.testConnection()) {
-    Serial.println("{\"error\":\"MPU6050 nao encontrado\"}");
-    while (true) delay(1000);
+    while (true) {
+      Serial.println("{\"error\":\"MPU6050 nao encontrado\"}");
+      delay(1000);
+    }
   }
 }
 

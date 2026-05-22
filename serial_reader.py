@@ -101,13 +101,15 @@ def _processar_payload(payload: dict) -> dict:
     }
 
 
-def run_serial(port: str):
+def run_serial(port: str, debug: bool = False):
     print(f"[serial] Conectando em {port} @ {BAUD} baud…")
     with serial.Serial(port, BAUD, timeout=2) as ser:
         print("[serial] Conectado. Aguardando dados do ESP32…\n")
         while True:
             try:
                 line = ser.readline().decode("utf-8", errors="ignore").strip()
+                if debug and line:
+                    print(f"[raw] {line}")
                 if not line or not line.startswith("{"):
                     continue
                 payload = json.loads(line)
@@ -158,6 +160,7 @@ def main():
     parser.add_argument("--port", help="Porta COM explícita (ex: COM3)")
     parser.add_argument("--simulate", action="store_true", help="Usa dados simulados")
     parser.add_argument("--rate", type=float, default=1.0, help="Intervalo simulação (s)")
+    parser.add_argument("--debug", action="store_true", help="Imprime todas as linhas recebidas")
     args = parser.parse_args()
 
     _ensure_ativo()
@@ -171,7 +174,7 @@ def main():
         print("[erro] Nenhuma porta serial encontrada. Use --port COM? ou --simulate.")
         sys.exit(1)
 
-    run_serial(port)
+    run_serial(port, debug=args.debug)
 
 
 if __name__ == "__main__":
