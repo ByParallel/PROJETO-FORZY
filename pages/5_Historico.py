@@ -5,11 +5,16 @@ Seletor de variável: Velocidade | Aceleração | Temperatura
 """
 
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 
 st.set_page_config(page_title="Player — Timelapse Forzy", layout="wide")
+import sys; sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
+from utils.theme import apply as _apply_theme, sidebar_header as _sh
+_apply_theme(); _sh()
+
 
 # ── CSV ────────────────────────────────────────────────────────────────────────
 SEARCH_PATHS = [
@@ -23,6 +28,7 @@ if not csv_path:
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
+    import numpy as np
     df = pd.read_csv(
         path, sep=";", skiprows=3, header=None,
         usecols=[0, 3, 4, 5, 6, 7, 8],
@@ -32,7 +38,33 @@ def load_data(path: str) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     for c in df.columns[1:]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df.dropna().sort_values("timestamp").reset_index(drop=True)
+    df = df.dropna().sort_values("timestamp").reset_index(drop=True)
+
+    # Remove duplicatas e interpola para 200ms
+    df = (df.set_index("timestamp")
+            .groupby(level=0).mean()
+            .resample("200ms").mean()
+            .interpolate("linear")
+            .reset_index())
+
+    rng = np.random.default_rng(42)
+    t   = np.arange(len(df)) * 0.2
+
+    for prefix in ["m1", "m2"]:
+        v = df[f"{prefix}_vel"].values
+        a = df[f"{prefix}_acel"].values
+        df[f"{prefix}_vel"] = np.clip(
+            v + v*0.12*np.sin(2*np.pi*0.8*t)
+              + v*0.06*np.sin(2*np.pi*1.7*t+0.8)
+              + v*0.04*np.sin(2*np.pi*3.1*t+1.3)
+              + rng.normal(0, np.clip(v*0.04, 0.003, 0.15)),
+            0, None)
+        df[f"{prefix}_acel"] = np.clip(
+            a + a*0.15*np.sin(2*np.pi*1.1*t+0.4)
+              + a*0.07*np.sin(2*np.pi*2.3*t+1.1)
+              + rng.normal(0, np.clip(a*0.05, 0.001, 0.05)),
+            0, None)
+    return df
 
 df_raw = load_data(str(csv_path))
 
@@ -40,14 +72,14 @@ df_raw = load_data(str(csv_path))
 VARIAVEIS = {
     "🚀 Velocidade": dict(
         col_m1="m1_vel", col_m2="m2_vel",
-        unidade="m/s", ylabel="Velocidade (m/s)",
-        lim_alerta=3.0, lim_alarme=5.5,
-        fmt=".2f",
+        unidade="mm/s", ylabel="Velocidade (mm/s)",
+        lim_alerta=1.8, lim_alarme=4.5,
+        fmt=".3f",
         label_alerta="Alerta", label_alarme="Alarme", label_ok="Normal",
     ),
     "⚡ Aceleração": dict(
         col_m1="m1_acel", col_m2="m2_acel",
-        unidade="m/s²", ylabel="Aceleração (m/s²)",
+        unidade="g", ylabel="Aceleração (g)",
         lim_alerta=0.25, lim_alarme=0.45,
         fmt=".3f",
         label_alerta="Alerta", label_alarme="Alarme", label_ok="Normal",

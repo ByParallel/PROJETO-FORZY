@@ -12,6 +12,10 @@ from streamlit_autorefresh import st_autorefresh
 from pathlib import Path
 
 st.set_page_config(page_title="SCADA — Forzy", layout="wide")
+import sys; sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
+from utils.theme import apply as _apply_theme, sidebar_header as _sh
+_apply_theme(); _sh()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CSS — alerta piscante
@@ -72,10 +76,10 @@ N = len(df)
 # ══════════════════════════════════════════════════════════════════════════════
 TEMP_ALERTA  = 35.0
 TEMP_ALARME  = 42.0
-VEL_ALERTA   = 3.0
-VEL_ALARME   = 5.5
-ACEL_ALERTA  = 0.25
-ACEL_ALARME  = 0.45
+VEL_ALERTA   = 1.8   # mm/s — ISO 10816 Classe I
+VEL_ALARME   = 4.5   # mm/s
+ACEL_ALERTA  = 0.25  # g
+ACEL_ALARME  = 0.45  # g
 
 def flag(v, a, al): return 2 if v>=al else 1 if v>=a else 0
 FLAG_COR  = {0:"#2ecc71", 1:"#f39c12", 2:"#e74c3c"}
@@ -111,8 +115,8 @@ with st.sidebar:
     st.subheader("Limiares")
     TEMP_ALERTA = st.number_input("Temp alerta °C", value=TEMP_ALERTA, step=1.0)
     TEMP_ALARME = st.number_input("Temp alarme °C", value=TEMP_ALARME, step=1.0)
-    VEL_ALERTA  = st.number_input("Vel alerta m/s", value=VEL_ALERTA,  step=0.5)
-    VEL_ALARME  = st.number_input("Vel alarme m/s", value=VEL_ALARME,  step=0.5)
+    VEL_ALERTA  = st.number_input("Vel alerta mm/s", value=VEL_ALERTA, step=0.1)
+    VEL_ALARME  = st.number_input("Vel alarme mm/s", value=VEL_ALARME, step=0.1)
     st.divider()
     st.caption(f"Frame {st.session_state.fidx+1}/{N}")
     st.caption(f"⏱ {row['ts'].strftime('%H:%M:%S')}")
@@ -227,160 +231,139 @@ mc2 = motor_fill(f_m2_temp, f_m2_vel)
 # ABA 2D
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2d:
+    import base64
+    from pathlib import Path as _Path
+    from PIL import Image as _PILImage
+    import plotly.express as _px
+
+    # ── Carrega imagem da bomba (DWG extraído) ────────────────────────────────
+    _img_path = _Path(__file__).parent.parent / "data" / "bomba.png"
+
+    # ── Carrega imagem PIL para usar em layout.images ────────────────────────
+    if _img_path.exists():
+        _pil_img = _PILImage.open(_img_path).convert("RGBA")
+        IW, IH = _pil_img.size
+    else:
+        _pil_img = None
+        IW, IH = 900, 600
+
     fig2 = go.Figure()
+    # Ponto invisível para forçar o range do eixo
+    fig2.add_trace(go.Scatter(x=[0,1600], y=[0,700], mode="markers",
+                               marker=dict(opacity=0), showlegend=False,
+                               hoverinfo="skip"))
 
-    # Fundo — parede da planta
-    fig2.add_shape(type="rect", x0=0,y0=0,x1=24,y1=14,
-                   fillcolor="#1a1a2e", line=dict(color="#333",width=2))
+    def ann(x, y, txt, size=11, color="white", ax="center", ay="middle", bgcolor=None):
+        kw = dict(bgcolor=bgcolor, bordercolor=color, borderwidth=1,
+                  borderpad=4) if bgcolor else {}
+        fig2.add_annotation(x=x, y=y, text=txt, showarrow=False,
+                             font=dict(size=size, color=color),
+                             xanchor=ax, yanchor=ay,
+                             xref="x", yref="y", **kw)
 
-    # Grade de piso
-    for gx in range(0,25,2):
-        fig2.add_shape(type="line",x0=gx,y0=0,x1=gx,y1=14,
-                       line=dict(color="#252540",width=1))
-    for gy in range(0,15,2):
-        fig2.add_shape(type="line",x0=0,y0=gy,x1=24,y1=gy,
-                       line=dict(color="#252540",width=1))
+    def box(x0, y0, x1, y1, fill, border, lw=2):
+        fig2.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
+                       xref="x", yref="y",
+                       fillcolor=fill, line=dict(color=border, width=lw),
+                       layer="above")
 
-    def rect(x0,y0,x1,y1,fill,line_col="#555",lw=2,layer="above"):
-        fig2.add_shape(type="rect",x0=x0,y0=y0,x1=x1,y1=y1,layer=layer,
-                       fillcolor=fill,line=dict(color=line_col,width=lw))
+    def wire(x0, y0, x1, y1, cor="#8e44ad", w=2):
+        # Curva Bézier cúbica suave — linha sólida
+        cx1, cy1 = x0 + (x1 - x0) * 0.5, y0
+        cx2, cy2 = x0 + (x1 - x0) * 0.5, y1
+        path = f"M {x0},{y0} C {cx1},{cy1} {cx2},{cy2} {x1},{y1}"
+        # sombra (linha mais larga e transparente por baixo)
+        fig2.add_shape(type="path", path=path, xref="x", yref="y",
+                       line=dict(color="rgba(142,68,173,0.25)", width=w+4),
+                       layer="above")
+        # linha principal sólida
+        fig2.add_shape(type="path", path=path, xref="x", yref="y",
+                       line=dict(color=cor, width=w), layer="above")
 
-    def label(x,y,txt,size=11,color="white",anchor="center"):
-        fig2.add_annotation(x=x,y=y,text=txt,showarrow=False,
-                            font=dict(size=size,color=color),
-                            xanchor=anchor,yanchor="middle")
+    # ── Layout: canvas 1600×580, 2 motores lado a lado ───────────────────────
+    CW, CH = 1600, 580
+    # Imagem 1040×420 centralizada
+    IX0, IY0 = (CW-1040)//2, 60
+    ISX, ISY = 1040, 420
 
-    # ── PAINEL ELÉTRICO ──────────────────────────────────────────────────────
-    rect(0.5,5,2.8,9,"#2c3e50","#3498db",2)
-    label(1.65,8.4,"PAINEL",9,"#3498db")
-    label(1.65,7.7,"ELÉTRICO",8,"#3498db")
-    # LEDs do painel
-    for yd,cor in [(7.1,"#2ecc71"),(6.6,"#f39c12"),(6.1,"#e74c3c")]:
-        fig2.add_shape(type="circle",x0=1.3,y0=yd-.15,x1=1.6,y1=yd+.15,
-                       fillcolor=cor,line=dict(color="#111",width=1))
+    # Sensor M1: sobre o motor esquerdo (corpo do motor ~motor esquerdo)
+    S1X, S1Y = IX0 + 120, IY0 + 130
+    # Sensor M2: sobre o motor direito
+    S2X, S2Y = IX0 + 120 + 520, IY0 + 130
 
-    # ── VFD 1 (inversor motor 1) ──────────────────────────────────────────────
-    rect(3.2,8.5,5.0,9.5,"#1e3a5f","#3498db",2)
-    label(4.1,9.0,"VFD 1",10,"#7ec8e3")
-    # Cabo painel → VFD1
-    fig2.add_shape(type="line",x0=2.8,y0=8.0,x1=3.2,y1=9.0,
-                   line=dict(color="#3498db",width=2,dash="dot"))
+    # ── PAINEL MOTOR 1 (esquerda) ─────────────────────────────────────────────
+    cm1 = FLAG_COR[max(f_m1_temp, f_m1_vel)]
+    P1X, P1Y, P1W, P1H = 10, 100, 260, 300
+    box(P1X, P1Y, P1X+P1W, P1Y+P1H, "rgba(13,17,23,0.92)", cm1, 2)
+    cx = P1X + P1W//2
+    ann(cx, P1Y+28,  "<b>MOTOR 1</b>",              14, cm1)
+    ann(cx, P1Y+58,  "VIM32PL  ·  Port 1",           9, "#7ec8e3")
+    ann(cx, P1Y+100, f"📳  {row.m1_vel:.3f} mm/s",  12, FLAG_COR[f_m1_vel])
+    ann(cx, P1Y+135, f"⚡  {row.m1_acel:.3f} g",    11, "#ccc")
+    ann(cx, P1Y+170, f"🌡  {row.m1_temp:.1f} °C",   11, FLAG_COR[f_m1_temp])
+    ann(cx, P1Y+215,
+        f"● {FLAG_NOME[max(f_m1_temp,f_m1_vel)]}",
+        13, FLAG_COR[max(f_m1_temp,f_m1_vel)], bgcolor="#0d1117")
+    ann(cx, P1Y+265, f"⏱ {row['ts'].strftime('%H:%M:%S')}", 8, "#445566")
 
-    # ── VFD 2 ─────────────────────────────────────────────────────────────────
-    rect(3.2,4.0,5.0,5.0,"#1e3a5f","#e74c3c",2)
-    label(4.1,4.5,"VFD 2",10,"#f1948a")
-    fig2.add_shape(type="line",x0=2.8,y0=6.0,x1=3.2,y1=4.5,
-                   line=dict(color="#e74c3c",width=2,dash="dot"))
+    # ── Fio e sensor 1 ────────────────────────────────────────────────────────
+    wire(P1X+P1W, P1Y+P1H//2, S1X-15, S1Y)
+    fig2.add_shape(type="circle",
+                   x0=S1X-18, y0=S1Y-18, x1=S1X+18, y1=S1Y+18,
+                   xref="x", yref="y",
+                   fillcolor="#8e44ad", line=dict(color="#d7bde2", width=2),
+                   layer="above")
+    ann(S1X, S1Y-28, "VIM32PL", 8, "#d7bde2")
 
-    # ── MOTOR 1 ───────────────────────────────────────────────────────────────
-    rect(5.5,7.8,9.0,10.2, mc1,"#eee",3)
-    # Corpo cilíndrico (elipse decorativa)
-    fig2.add_shape(type="circle",x0=5.5,y0=8.3,x1=6.5,y1=9.7,
-                   fillcolor="#1a1a2e",line=dict(color="#aaa",width=2))
-    fig2.add_shape(type="circle",x0=8.0,y0=8.3,x1=9.0,y1=9.7,
-                   fillcolor="#1a1a2e",line=dict(color="#aaa",width=2))
-    label(7.25,9.0,"MOTOR 1",11,"white")
-    label(7.25,8.5,f"Port 1",9,"#ccc")
-    # Cabo VFD1 → Motor 1
-    fig2.add_shape(type="line",x0=5.0,y0=9.0,x1=5.5,y1=9.0,
-                   line=dict(color="#3498db",width=3))
+    # ── PAINEL MOTOR 2 (direita) ──────────────────────────────────────────────
+    cm2 = FLAG_COR[max(f_m2_temp, f_m2_vel)]
+    P2X, P2Y, P2W, P2H = CW-270, 100, 260, 300
+    box(P2X, P2Y, P2X+P2W, P2Y+P2H, "rgba(13,17,23,0.92)", cm2, 2)
+    cx2 = P2X + P2W//2
+    ann(cx2, P2Y+28,  "<b>MOTOR 2</b>",              14, cm2)
+    ann(cx2, P2Y+58,  "VIM32PL  ·  Port 2",           9, "#7ec8e3")
+    ann(cx2, P2Y+100, f"📳  {row.m2_vel:.3f} mm/s",  12, FLAG_COR[f_m2_vel])
+    ann(cx2, P2Y+135, f"⚡  {row.m2_acel:.3f} g",    11, "#ccc")
+    ann(cx2, P2Y+170, f"🌡  {row.m2_temp:.1f} °C",   11, FLAG_COR[f_m2_temp])
+    ann(cx2, P2Y+215,
+        f"● {FLAG_NOME[max(f_m2_temp,f_m2_vel)]}",
+        13, FLAG_COR[max(f_m2_temp,f_m2_vel)], bgcolor="#0d1117")
+    ann(cx2, P2Y+265, f"Frame {st.session_state.fidx+1}/{N}", 8, "#445566")
 
-    # ── SENSOR MPU6050 — Motor 1 ──────────────────────────────────────────────
-    rect(6.5,10.2,7.5,11.0,"#8e44ad","#c39bd3",1)
-    label(7.0,10.6,"MPU6050",8,"#d7bde2")
-    fig2.add_shape(type="line",x0=7.0,y0=10.2,x1=7.0,y1=10.2,
-                   line=dict(color="#9b59b6",width=2))
+    # ── Fio e sensor 2 ────────────────────────────────────────────────────────
+    wire(P2X, P2Y+P2H//2, S2X+15, S2Y)
+    fig2.add_shape(type="circle",
+                   x0=S2X-18, y0=S2Y-18, x1=S2X+18, y1=S2Y+18,
+                   xref="x", yref="y",
+                   fillcolor="#8e44ad", line=dict(color="#d7bde2", width=2),
+                   layer="above")
+    ann(S2X, S2Y-28, "VIM32PL", 8, "#d7bde2")
 
-    # ── ACOPLAMENTO + EIXO Motor 1 ────────────────────────────────────────────
-    rect(9.0,8.8,9.6,9.2,"#7f8c8d","#bdc3c7",2)
-    fig2.add_shape(type="line",x0=9.6,y0=9.0,x1=11.0,y1=9.0,
-                   line=dict(color="#95a5a6",width=4))
-
-    # ── CARGA 1 ───────────────────────────────────────────────────────────────
-    rect(11.0,7.5,14.5,10.5,"#1c2833","#7f8c8d",2)
-    label(12.75,9.2,"CARGA 1",11,"#aaa")
-    label(12.75,8.7,"(Máquina)",9,"#666")
-    # Engrenagem decorativa
-    fig2.add_shape(type="circle",x0=12.0,y0=8.5,x1=13.5,y1=9.9,
-                   fillcolor="#2c3e50",line=dict(color="#555",width=2))
-
-    # ── MOTOR 2 ───────────────────────────────────────────────────────────────
-    rect(5.5,3.3,9.0,5.7, mc2,"#eee",3)
-    fig2.add_shape(type="circle",x0=5.5,y0=3.8,x1=6.5,y1=5.2,
-                   fillcolor="#1a1a2e",line=dict(color="#aaa",width=2))
-    fig2.add_shape(type="circle",x0=8.0,y0=3.8,x1=9.0,y1=5.2,
-                   fillcolor="#1a1a2e",line=dict(color="#aaa",width=2))
-    label(7.25,4.5,"MOTOR 2",11,"white")
-    label(7.25,4.0,"Port 2",9,"#ccc")
-    fig2.add_shape(type="line",x0=5.0,y0=4.5,x1=5.5,y1=4.5,
-                   line=dict(color="#e74c3c",width=3))
-
-    # ── SENSOR MPU6050 — Motor 2 ──────────────────────────────────────────────
-    rect(6.5,2.5,7.5,3.3,"#8e44ad","#c39bd3",1)
-    label(7.0,2.9,"MPU6050",8,"#d7bde2")
-
-    # ── ACOPLAMENTO + EIXO Motor 2 ────────────────────────────────────────────
-    rect(9.0,4.3,9.6,4.7,"#7f8c8d","#bdc3c7",2)
-    fig2.add_shape(type="line",x0=9.6,y0=4.5,x1=11.0,y1=4.5,
-                   line=dict(color="#95a5a6",width=4))
-
-    # ── CARGA 2 ───────────────────────────────────────────────────────────────
-    rect(11.0,3.0,14.5,6.0,"#1c2833","#7f8c8d",2)
-    label(12.75,4.7,"CARGA 2",11,"#aaa")
-    label(12.75,4.2,"(Máquina)",9,"#666")
-    fig2.add_shape(type="circle",x0=12.0,y0=4.0,x1=13.5,y1=5.4,
-                   fillcolor="#2c3e50",line=dict(color="#555",width=2))
-
-    # ── DADOS ao vivo sobre os motores ────────────────────────────────────────
-    for mx, vals, prefix in [
-        (16.5, row, "m1"), (16.5, row, "m2")
-    ]:
-        pass  # feitos como anotações abaixo
-
-    # Painel de dados M1
-    rect(15.5,7.5,23.5,10.5,"#0d1117","#3498db",2)
-    label(19.5,10.1,"── MOTOR 1 ──",10,"#3498db")
-    label(19.5,9.5, f"🌡 Temp:  {row.m1_temp:.1f} °C",10,
-          FLAG_COR[f_m1_temp],"center")
-    label(19.5,8.9, f"⚡ Acel:  {row.m1_acel:.3f} m/s²",10,"#eee","center")
-    label(19.5,8.3, f"🚀 Vel:   {row.m1_vel:.2f} m/s",10,
-          FLAG_COR[f_m1_vel],"center")
-    label(19.5,7.8, f"Status: {FLAG_NOME[max(f_m1_temp,f_m1_vel)]}",9,
-          FLAG_COR[max(f_m1_temp,f_m1_vel)],"center")
-
-    # Painel de dados M2
-    rect(15.5,3.0,23.5,6.0,"#0d1117","#e74c3c",2)
-    label(19.5,5.6,"── MOTOR 2 ──",10,"#e74c3c")
-    label(19.5,5.0, f"🌡 Temp:  {row.m2_temp:.1f} °C",10,
-          FLAG_COR[f_m2_temp],"center")
-    label(19.5,4.4, f"⚡ Acel:  {row.m2_acel:.3f} m/s²",10,"#eee","center")
-    label(19.5,3.8, f"🚀 Vel:   {row.m2_vel:.2f} m/s",10,
-          FLAG_COR[f_m2_vel],"center")
-    label(19.5,3.3, f"Status: {FLAG_NOME[max(f_m2_temp,f_m2_vel)]}",9,
-          FLAG_COR[max(f_m2_temp,f_m2_vel)],"center")
-
-    # Título da planta
-    label(12.0,13.3,"BANCADA DE TESTES — FORZY",13,"#ecf0f1")
-    label(12.0,12.7,f"⏱ {row['ts'].strftime('%H:%M:%S')}   "
-                    f"Frame {st.session_state.fidx+1}/{N}",
-          10,"#888")
-
-    # Legenda
-    for lx, cor, txt in [(0.7,"#2ecc71","OK"),
-                          (3.2,"#f39c12","Alerta"),
-                          (5.7,"#e74c3c","Alarme"),
-                          (8.5,"#8e44ad","Sensor")]:
-        fig2.add_shape(type="rect",x0=lx,y0=0.4,x1=lx+.5,y1=1.2,
-                       fillcolor=cor,line=dict(color="#111",width=1))
-        label(lx+1.0,0.8,txt,9,"#ccc","left")
+    # ── Título e legenda ──────────────────────────────────────────────────────
+    ann(CW//2, CH-55,
+        "<b>BANCADA DE TESTES — FORZY</b>  ·  Sensor VIM32PL IO-Link",
+        13, "#7ec8e3")
+    for lx, cor, txt in [(520,"#2ecc71","OK"),(620,"#f39c12","Alerta"),
+                          (730,"#e74c3c","Alarme"),(840,"#8e44ad","Sensor VIM32PL")]:
+        fig2.add_shape(type="rect", x0=lx, y0=CH-30, x1=lx+16, y1=CH-14,
+                       xref="x", yref="y",
+                       fillcolor=cor, line=dict(color="#111",width=1), layer="above")
+        ann(lx+26, CH-22, txt, 8, "#aaa", "left")
 
     fig2.update_layout(
-        xaxis=dict(range=[0,24],showgrid=False,zeroline=False,
-                   showticklabels=False),
-        yaxis=dict(range=[0,14],showgrid=False,zeroline=False,
-                   showticklabels=False,scaleanchor="x",scaleratio=1),
-        height=600,
-        margin=dict(l=0,r=0,t=10,b=0),
+        xaxis=dict(range=[0, CW], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        yaxis=dict(range=[CH, 0], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        images=[dict(
+            source=_pil_img,
+            xref="x", yref="y",
+            x=IX0, y=IY0,
+            sizex=ISX, sizey=ISY,
+            sizing="stretch",
+            opacity=0.95,
+            layer="below",
+        )] if _img_path.exists() else [],
+        height=580,
+        margin=dict(l=0, r=0, t=10, b=0),
         paper_bgcolor="#0d1117",
         plot_bgcolor="#0d1117",
         showlegend=False,
@@ -391,110 +374,137 @@ with tab2d:
 # ABA 3D
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3d:
-    def cilindro(cx, cy, cz, raio, comprimento, cor, nome, n=40):
-        theta = np.linspace(0, 2*np.pi, n)
-        z_arr = np.array([0, comprimento])
-        theta_g, z_g = np.meshgrid(theta, z_arr)
-        x_ = raio * np.cos(theta_g) + cx
-        y_ = raio * np.sin(theta_g) + cy
-        z_ = z_g + cz
-        return go.Surface(x=x_, y=y_, z=z_,
-                          colorscale=[[0,cor],[1,cor]],
-                          showscale=False, opacity=0.92,
-                          name=nome,
-                          hovertemplate=f"<b>{nome}</b><extra></extra>")
-
-    def disco(cx, cy, cz, raio, cor, n=40):
-        theta = np.linspace(0, 2*np.pi, n)
-        r_arr = np.linspace(0, raio, 5)
-        t_g, r_g = np.meshgrid(theta, r_arr)
-        x_ = r_g * np.cos(t_g) + cx
-        y_ = r_g * np.sin(t_g) + cy
-        z_ = np.full_like(x_, cz)
-        return go.Surface(x=x_, y=y_, z=z_,
-                          colorscale=[[0,cor],[1,cor]],
-                          showscale=False, opacity=0.95)
+    from pathlib import Path as _P3
+    _vpath = _P3(__file__).parent.parent / "data" / "bomba_verts.npy"
+    _fpath = _P3(__file__).parent.parent / "data" / "bomba_faces.npy"
 
     fig3 = go.Figure()
 
-    # ── Motor 1 ───────────────────────────────────────────────────────────────
-    fig3.add_trace(cilindro(0,0,0,1.0,3.0,mc1,"Motor 1"))
-    fig3.add_trace(disco(0,0,0,  1.0,mc1))
-    fig3.add_trace(disco(0,0,3.0,1.0,mc1))
-    # Eixo M1
-    fig3.add_trace(go.Scatter3d(
-        x=[0,0],y=[0,0],z=[3.0,5.0],
-        mode="lines",line=dict(color="#95a5a6",width=8),name="Eixo M1"))
-    # Sensor M1
-    fig3.add_trace(go.Scatter3d(
-        x=[0.8],y=[0.8],z=[1.5],
-        mode="markers+text",
-        marker=dict(size=10,color="#8e44ad",symbol="diamond"),
-        text=["MPU6050"],textposition="top center",
-        textfont=dict(color="#d7bde2",size=10),name="Sensor M1"))
+    if _vpath.exists() and _fpath.exists():
+        V = np.load(str(_vpath)).astype(float)
+        F = np.load(str(_fpath))
 
-    # ── Motor 2 ───────────────────────────────────────────────────────────────
-    fig3.add_trace(cilindro(4,0,0,1.0,3.0,mc2,"Motor 2"))
-    fig3.add_trace(disco(4,0,0,  1.0,mc2))
-    fig3.add_trace(disco(4,0,3.0,1.0,mc2))
-    fig3.add_trace(go.Scatter3d(
-        x=[4,4],y=[0,0],z=[3.0,5.0],
-        mode="lines",line=dict(color="#95a5a6",width=8),name="Eixo M2"))
-    fig3.add_trace(go.Scatter3d(
-        x=[4.8],y=[0.8],z=[1.5],
-        mode="markers+text",
-        marker=dict(size=10,color="#8e44ad",symbol="diamond"),
-        text=["MPU6050"],textposition="top center",
-        textfont=dict(color="#d7bde2",size=10),name="Sensor M2"))
+        # Normaliza para caber em -5..5 e centraliza
+        scale = 10.0 / (V.max() - V.min())
+        V = V * scale
 
-    # ── Cargas ────────────────────────────────────────────────────────────────
-    for cx_ in [0,4]:
-        fig3.add_trace(go.Mesh3d(
-            x=[cx_-.8,cx_+.8,cx_+.8,cx_-.8,cx_-.8,cx_+.8,cx_+.8,cx_-.8],
-            y=[1.5,1.5,2.5,2.5,1.5,1.5,2.5,2.5],
-            z=[0.3,0.3,0.3,0.3,2.7,2.7,2.7,2.7],
-            alphahull=0, color="#2c3e50", opacity=0.7,
-            name="Carga"))
+        # Separa faces e re-indexa vértices para cada grupo
+        z_face = V[F].mean(axis=1)[:,2]
+        z_corte = -1.8
 
-    # Labels de dados
-    for cx_, row_val, nome, fc_t, fc_v in [
-        (0, row, "Motor 1", f_m1_temp, f_m1_vel),
-        (4, row, "Motor 2", f_m2_temp, f_m2_vel),
-    ]:
-        cor_txt = FLAG_COR[max(fc_t, fc_v)]
-        fig3.add_trace(go.Scatter3d(
-            x=[cx_],y=[0],z=[4.0],
-            mode="text",
-            text=[f"🌡{row_val.m1_temp if 'Motor 1'==nome else row_val.m2_temp:.1f}°C  "
-                  f"🚀{row_val.m1_vel if 'Motor 1'==nome else row_val.m2_vel:.2f}m/s"],
-            textfont=dict(size=11,color=cor_txt),
-            showlegend=False,
-        ))
+        pior = max(f_m1_temp, f_m1_vel, f_m2_temp, f_m2_vel)
+        cor_maq = FLAG_COR[pior]
+
+        lighting = dict(ambient=0.45, diffuse=0.85, specular=0.35,
+                        roughness=0.45, fresnel=0.25)
+        lpos = dict(x=150, y=250, z=200)
+
+        def add_mesh_group(fig, V, F, mask, color, name, opacity=0.93, area_max=None):
+            F_sel = F[mask]
+            if len(F_sel) == 0:
+                return
+            # Remove faces com área anômala (artefatos de tessellação)
+            if area_max is not None:
+                v0=V[F_sel[:,0]]; v1=V[F_sel[:,1]]; v2=V[F_sel[:,2]]
+                areas = np.linalg.norm(np.cross(v1-v0, v2-v0), axis=1)*0.5
+                F_sel = F_sel[areas <= area_max]
+            if len(F_sel) == 0:
+                return
+            # Re-indexa vértices usados
+            used = np.unique(F_sel)
+            remap = np.zeros(V.shape[0], dtype=int)
+            remap[used] = np.arange(len(used))
+            V_sel = V[used]
+            F_new = remap[F_sel]
+            fig.add_trace(go.Mesh3d(
+                x=V_sel[:,0], y=V_sel[:,1], z=V_sel[:,2],
+                i=F_new[:,0], j=F_new[:,1], k=F_new[:,2],
+                color=color, opacity=opacity, name=name,
+                flatshading=False, lighting=lighting, lightposition=lpos,
+                hoverinfo="skip", showlegend=True,
+            ))
+
+        # Base: faces planas grandes são normais — sem filtro de área
+        add_mesh_group(fig3, V, F, z_face <= z_corte,
+                       "#1e3d5c", "Base / Skid", opacity=0.97, area_max=None)
+        # Máquina: tampas de cilindro chegam a ~0.8 — artefatos estão em 3.5+
+        add_mesh_group(fig3, V, F, z_face > z_corte,
+                       cor_maq, f"Bomba — {FLAG_NOME[pior]}", opacity=0.93, area_max=2.0)
+
+        # Marca os dois pontos de sensor na carcaça
+        sx1 = V[:,0].min() + (V[:,0].max()-V[:,0].min()) * 0.35
+        sx2 = V[:,0].min() + (V[:,0].max()-V[:,0].min()) * 0.65
+        sz  = V[:,2].max()
+        sy  = V[:,1].mean()
+
+        for sx, nome, fc_t, fc_v, rv in [
+            (sx1, "Motor 1", f_m1_temp, f_m1_vel, row),
+            (sx2, "Motor 2", f_m2_temp, f_m2_vel, row),
+        ]:
+            cor_s = FLAG_COR[max(fc_t, fc_v)]
+            vel_v = rv.m1_vel if "Motor 1" == nome else rv.m2_vel
+            tmp_v = rv.m1_temp if "Motor 1" == nome else rv.m2_temp
+            acel_v = rv.m1_acel if "Motor 1" == nome else rv.m2_acel
+
+            fig3.add_trace(go.Scatter3d(
+                x=[sx], y=[sy], z=[sz + 0.3],
+                mode="markers+text",
+                marker=dict(size=12, color="#8e44ad", symbol="diamond",
+                            line=dict(color="#d7bde2", width=2)),
+                text=[f"VIM32PL<br>{FLAG_NOME[max(fc_t,fc_v)]}"],
+                textposition="top center",
+                textfont=dict(color=cor_s, size=10),
+                name=f"Sensor {nome}",
+                hovertemplate=(
+                    f"<b>{nome}</b><br>"
+                    f"Vel: {vel_v:.3f} mm/s<br>"
+                    f"Acel: {acel_v:.3f} g<br>"
+                    f"Temp: {tmp_v:.1f} °C<br>"
+                    f"Status: {FLAG_NOME[max(fc_t,fc_v)]}"
+                    "<extra></extra>"
+                ),
+            ))
+
+            # Linha vertical do sensor até a carcaça
+            fig3.add_trace(go.Scatter3d(
+                x=[sx, sx], y=[sy, sy], z=[V[:,2].max()*0.6, sz+0.3],
+                mode="lines",
+                line=dict(color="#8e44ad", width=3, dash="dot"),
+                showlegend=False, hoverinfo="skip",
+            ))
+
+    else:
+        fig3.add_trace(go.Scatter3d(x=[0],y=[0],z=[0],mode="text",
+                                     text=["STP não carregado"],
+                                     textfont=dict(color="#e74c3c",size=14)))
 
     fig3.update_layout(
-        height=580,
+        height=620,
         scene=dict(
-            xaxis=dict(showgrid=True,gridcolor="#222",backgroundcolor="#0d1117",
-                       title="",showticklabels=False),
-            yaxis=dict(showgrid=True,gridcolor="#222",backgroundcolor="#0d1117",
-                       title="",showticklabels=False),
-            zaxis=dict(showgrid=True,gridcolor="#222",backgroundcolor="#0d1117",
-                       title="Altura",showticklabels=False),
+            xaxis=dict(showgrid=True, gridcolor="#1a2e3a", backgroundcolor="#0d1117",
+                       title="", showticklabels=False),
+            yaxis=dict(showgrid=True, gridcolor="#1a2e3a", backgroundcolor="#0d1117",
+                       title="", showticklabels=False),
+            zaxis=dict(showgrid=True, gridcolor="#1a2e3a", backgroundcolor="#0d1117",
+                       title="", showticklabels=False),
             bgcolor="#0d1117",
-            camera=dict(eye=dict(x=1.8,y=-2.2,z=1.4)),
-            aspectmode="manual",
-            aspectratio=dict(x=2,y=1,z=1),
+            camera=dict(eye=dict(x=1.6, y=-2.0, z=1.2)),
+            aspectmode="data",
         ),
         paper_bgcolor="#0d1117",
-        margin=dict(l=0,r=0,t=30,b=0),
-        legend=dict(font=dict(color="white"),bgcolor="#1a1a2e"),
-        title=dict(text=f"Vista 3D — {row['ts'].strftime('%H:%M:%S')}",
-                   font=dict(color="#eee",size=14)),
+        margin=dict(l=0, r=0, t=40, b=0),
+        legend=dict(font=dict(color="white", size=11), bgcolor="#1a1a2e",
+                    bordercolor="#333", borderwidth=1),
+        title=dict(
+            text=f"Vista 3D — Modelo STP Real · {row['ts'].strftime('%H:%M:%S')}  "
+                 f"M1:{FLAG_NOME[max(f_m1_temp,f_m1_vel)]}  "
+                 f"M2:{FLAG_NOME[max(f_m2_temp,f_m2_vel)]}",
+            font=dict(color="#7ec8e3", size=13)),
     )
     st.plotly_chart(fig3, use_container_width=True)
-
     st.info("💡 Arraste para rotacionar · Scroll para zoom · "
-            "Motor colorido conforme status: 🟢 OK  🟡 Alerta  🔴 Alarme")
+            "Cor do modelo reflete o pior status: 🟢 OK  🟡 Alerta  🔴 Alarme  "
+            "· Diamante roxo = sensor VIM32PL")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ABA HISTÓRICO — mini dashboard integrado
