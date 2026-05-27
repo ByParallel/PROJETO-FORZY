@@ -317,9 +317,9 @@ def main():
         run_simulate(args.rate)
         return
 
-    port = args.port or _detect_port()
+    port = args.port or _detect_port() or "COM5"
     if not port:
-        print("[erro] Nenhuma porta serial encontrada. Use --port COM? ou --simulate.")
+        print("[erro] Nenhuma porta serial encontrada. Use --port COM5 ou --simulate.")
         sys.exit(1)
 
     if args.binary:

@@ -24,7 +24,7 @@ PROJETO-FORZY/
 │   ├── 4_Operacional.py     # Análise do dataset histórico Forzy (aba principal)
 │   ├── 5_Historico.py       # Player/timelapse do dataset
 │   ├── 6_SCADA.py           # Planta 2D (DWG renderizado) + Vista 3D (STP real)
-│   └── 7_IoT.py             # Interface de conexão ESP32 + leitura ao vivo simulada
+│   └── 7_IoT.py             # Interface de conexão ESP32 + leitura ao vivo real/simulada
 ├── utils/
 │   ├── mock_data.py         # Gerador de dados simulados (4 modos de falha)
 │   └── theme.py             # CSS global + sidebar_header() — importar em toda página
@@ -34,10 +34,16 @@ PROJETO-FORZY/
 │   ├── bomba_verts.npy      # Vértices tessellados do STP (float32)
 │   ├── bomba_faces.npy      # Faces tesselladas do STP (int32)
 │   └── motores.db           # SQLite para leituras do ESP32 (pode estar vazio)
+├── dados/                   # CSVs gerados pelo coletor serial (dados_YYYY-MM-DD_HH-MM-SS.csv)
 ├── firmware/
-│   └── esp32_mpu6050_rms.ino
+│   ├── esp32_mpu6050_rms/
+│   │   └── esp32_mpu6050_rms.ino        # Firmware binário com timer (300 Hz)
+│   └── TIMER_MPU6050_BYTES_STARTBYTE/
+│       └── TIMER_MPU6050_BYTES_STARTBYTE.ino  # Firmware binário alternativo
+├── Armazenamento_Acelerometro_Bytes_Convertido.py  # Coletor serial ativo (lê COM5, salva CSV)
+├── TIMER_MPU6050_BYTES_STARTBYTE/       # Sketch binário (não usado no fluxo atual)
 ├── database.py              # Camada SQLite (tabelas: ativos, leituras)
-└── serial_reader.py         # Leitor USB-Serial do ESP32 (não usado ativamente)
+└── serial_reader.py         # Leitor USB-Serial legado (não usado ativamente)
 ```
 
 ## Dados
@@ -123,13 +129,38 @@ Renderização isométrica de perfil lateral (rz=90°, rx=15°) dos 2 motores la
 - Protocolo: IO-Link 1.1, COM2 (38,4 kBit/s), ciclo mín 5 ms
 - Certificado DIN ISO 10816/20816
 
-## ESP32 (conexão atual desativada)
+## ESP32 — Fluxo de Dados Real (ativo)
 
-O `serial_reader.py` e `database.py` existem mas a conexão USB-Serial com o ESP32 não está ativa. A página `7_IoT.py` roda em modo simulação. Para reativar:
-```powershell
-python serial_reader.py --simulate   # modo simulação
-python serial_reader.py --port COM3  # hardware real
+### Firmware em uso
+**`C:\Users\gel\Downloads\MPU6050.ino`** (sketch do professor) — saída texto 115200 baud:
 ```
+AX (g): 0.012 | AY (g): 0.974 | AZ (g): 0.195 || GX (°/s): -2.3 | GY (°/s): -1.5 | GZ (°/s): 2.1
+```
+- Placa: **AI Thinker ESP32-CAM** na **COM5**
+- MPU6050 soldado diretamente (I2C nos pinos padrão do ESP32-CAM)
+- Taxa: 5 amostras/segundo (`delay(200)` no loop)
+
+### Coletor serial
+```powershell
+python Armazenamento_Acelerometro_Bytes_Convertido.py
+```
+- Salva em `dados/dados_YYYY-MM-DD_HH-MM-SS.csv` com colunas: `timestamp, AX_g, AY_g, AZ_g, GX_dps, GY_dps, GZ_dps`
+- **IMPORTANTE**: abrir a porta com `rts=False, dtr=False` — caso contrário o ESP32 entra em modo bootloader e não envia dados
+
+### Página IoT (`7_IoT.py`)
+- Modo **"🟢 ESP32 Real (USB)"**: lê o CSV mais recente de `dados/` a cada 2s (autorefresh)
+- Exibe gráficos de AX/AY/AZ e magnitude de aceleração
+- Modo **"🔴 Simulação"**: dados sintéticos, não requer hardware
+
+### Como rodar com hardware real
+```powershell
+# Terminal 1 — coletor serial (deixar rodando)
+python Armazenamento_Acelerometro_Bytes_Convertido.py
+
+# Terminal 2 — site
+python -m streamlit run 1_Inicio.py
+```
+Depois selecionar "🟢 ESP32 Real (USB)" na sidebar da página IoT.
 
 ## Dependências Principais
 
