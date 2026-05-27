@@ -13,8 +13,8 @@ from pathlib import Path
 
 st.set_page_config(page_title="SCADA — Forzy", layout="wide")
 import sys; sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-from utils.theme import apply as _apply_theme, sidebar_header as _sh
-_apply_theme(); _sh()
+from utils.theme import apply as _apply_theme, sidebar_nav as _snav
+_apply_theme(); _snav("scada")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -109,7 +109,7 @@ row = df.iloc[st.session_state.fidx]
 # Sidebar
 # ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.header("⚙️ SCADA Config")
+    st.header("SCADA Config")
     vista = st.radio("Vista", ["2D Planta", "3D Motor"], index=0)
     st.divider()
     st.subheader("Limiares")
@@ -119,12 +119,12 @@ with st.sidebar:
     VEL_ALARME  = st.number_input("Vel alarme mm/s", value=VEL_ALARME, step=0.1)
     st.divider()
     st.caption(f"Frame {st.session_state.fidx+1}/{N}")
-    st.caption(f"⏱ {row['ts'].strftime('%H:%M:%S')}")
+    st.caption(f"{row['ts'].strftime('%H:%M:%S')}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Header + Player bar
 # ══════════════════════════════════════════════════════════════════════════════
-st.title("🏭 SCADA — Bancada Forzy")
+st.title("SCADA — Bancada Forzy")
 
 with st.container():
     st.markdown('<div class="player-bar">', unsafe_allow_html=True)
@@ -177,7 +177,7 @@ with st.container():
     with pc6:
         st.markdown(
             f"<div style='color:#aaa;font-size:.82rem;padding-top:8px;text-align:center'>"
-            f"⏱<br>{row['ts'].strftime('%H:%M:%S')}</div>",
+            f"{row['ts'].strftime('%H:%M:%S')}</div>",
             unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
@@ -194,13 +194,13 @@ al1, al2 = st.columns(2)
 with al1:
     css = "alert-red" if f_m1_temp==2 else "alert-yellow" if f_m1_temp==1 else "status-ok"
     st.markdown(
-        f'<div class="{css}">🔵 MOTOR 1 — Temp {row.m1_temp:.1f}°C '
+        f'<div class="{css}">MOTOR 1 — Temp {row.m1_temp:.1f}°C '
         f'| Vel {row.m1_vel:.2f} m/s — {FLAG_NOME[max(f_m1_temp,f_m1_vel)]}</div>',
         unsafe_allow_html=True)
 with al2:
     css = "alert-red" if f_m2_temp==2 else "alert-yellow" if f_m2_temp==1 else "status-ok"
     st.markdown(
-        f'<div class="{css}">🔴 MOTOR 2 — Temp {row.m2_temp:.1f}°C '
+        f'<div class="{css}">MOTOR 2 — Temp {row.m2_temp:.1f}°C '
         f'| Vel {row.m2_vel:.2f} m/s — {FLAG_NOME[max(f_m2_temp,f_m2_vel)]}</div>',
         unsafe_allow_html=True)
 
@@ -209,7 +209,7 @@ st.markdown("")
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS — 2D / 3D
 # ══════════════════════════════════════════════════════════════════════════════
-tab2d, tab3d, tab_hist = st.tabs(["🗺️ Planta 2D", "🧊 Vista 3D", "📈 Histórico"])
+tab2d, tab3d, tab_hist = st.tabs(["Planta 2D", "Vista 3D", "Histórico"])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # helpers de cor com "blink" simulado por frame par/ímpar
@@ -298,13 +298,13 @@ with tab2d:
     cx = P1X + P1W//2
     ann(cx, P1Y+28,  "<b>MOTOR 1</b>",              14, cm1)
     ann(cx, P1Y+58,  "VIM32PL  ·  Port 1",           9, "#7ec8e3")
-    ann(cx, P1Y+100, f"📳  {row.m1_vel:.3f} mm/s",  12, FLAG_COR[f_m1_vel])
-    ann(cx, P1Y+135, f"⚡  {row.m1_acel:.3f} g",    11, "#ccc")
-    ann(cx, P1Y+170, f"🌡  {row.m1_temp:.1f} °C",   11, FLAG_COR[f_m1_temp])
+    ann(cx, P1Y+100, f"Vel: {row.m1_vel:.3f} mm/s",  12, FLAG_COR[f_m1_vel])
+    ann(cx, P1Y+135, f"Acel: {row.m1_acel:.3f} g",    11, "#ccc")
+    ann(cx, P1Y+170, f"Temp: {row.m1_temp:.1f} °C",   11, FLAG_COR[f_m1_temp])
     ann(cx, P1Y+215,
         f"● {FLAG_NOME[max(f_m1_temp,f_m1_vel)]}",
         13, FLAG_COR[max(f_m1_temp,f_m1_vel)], bgcolor="#0d1117")
-    ann(cx, P1Y+265, f"⏱ {row['ts'].strftime('%H:%M:%S')}", 8, "#445566")
+    ann(cx, P1Y+265, f"{row['ts'].strftime('%H:%M:%S')}", 8, "#445566")
 
     # ── Fio e sensor 1 ────────────────────────────────────────────────────────
     wire(P1X+P1W, P1Y+P1H//2, S1X-15, S1Y)
@@ -322,9 +322,9 @@ with tab2d:
     cx2 = P2X + P2W//2
     ann(cx2, P2Y+28,  "<b>MOTOR 2</b>",              14, cm2)
     ann(cx2, P2Y+58,  "VIM32PL  ·  Port 2",           9, "#7ec8e3")
-    ann(cx2, P2Y+100, f"📳  {row.m2_vel:.3f} mm/s",  12, FLAG_COR[f_m2_vel])
-    ann(cx2, P2Y+135, f"⚡  {row.m2_acel:.3f} g",    11, "#ccc")
-    ann(cx2, P2Y+170, f"🌡  {row.m2_temp:.1f} °C",   11, FLAG_COR[f_m2_temp])
+    ann(cx2, P2Y+100, f"Vel: {row.m2_vel:.3f} mm/s",  12, FLAG_COR[f_m2_vel])
+    ann(cx2, P2Y+135, f"Acel: {row.m2_acel:.3f} g",    11, "#ccc")
+    ann(cx2, P2Y+170, f"Temp: {row.m2_temp:.1f} °C",   11, FLAG_COR[f_m2_temp])
     ann(cx2, P2Y+215,
         f"● {FLAG_NOME[max(f_m2_temp,f_m2_vel)]}",
         13, FLAG_COR[max(f_m2_temp,f_m2_vel)], bgcolor="#0d1117")
@@ -502,8 +502,8 @@ with tab3d:
             font=dict(color="#7ec8e3", size=13)),
     )
     st.plotly_chart(fig3, use_container_width=True)
-    st.info("💡 Arraste para rotacionar · Scroll para zoom · "
-            "Cor do modelo reflete o pior status: 🟢 OK  🟡 Alerta  🔴 Alarme  "
+    st.info("Arraste para rotacionar · Scroll para zoom · "
+            "Cor do modelo reflete o pior status: OK  Alerta  Alarme  "
             "· Diamante roxo = sensor VIM32PL")
 
 # ══════════════════════════════════════════════════════════════════════════════

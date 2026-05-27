@@ -7,8 +7,8 @@ from datetime import datetime
 
 st.set_page_config(page_title="IoT · ESP32", layout="wide")
 import sys; sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-from utils.theme import apply as _apply_theme, sidebar_header as _sh
-_apply_theme(); _sh()
+from utils.theme import apply as _apply_theme, sidebar_nav as _snav
+_apply_theme(); _snav("iot")
 
 
 # ── CSS da página ─────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ st.markdown("""
 <div style="background:#08111f;border:1px solid #0f2035;border-radius:10px;
             padding:18px 28px;margin-bottom:20px">
   <div style="font-size:1.15rem;font-weight:700;color:#e2eaf4">
-    📡 Conexão IoT — Sensor VIM32PL via ESP32
+    Conexão IoT — Sensor VIM32PL via ESP32
   </div>
   <div style="font-size:.8rem;color:#2a5a7a;margin-top:4px">
     Interface de monitoramento ao vivo · IO-Link 1.1 → ESP32 → Dashboard
@@ -57,7 +57,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    modo = st.radio("Fonte de dados", ["🔴 Simulação (sem hardware)", "🟢 ESP32 Real (USB)"],
+    modo = st.radio("Fonte de dados", ["Simulação (sem hardware)", "ESP32 Real (USB)"],
                     index=0)
     st.divider()
     porta = st.selectbox("Porta Serial", ["COM5","COM3","COM4","COM6","COM7","AUTO"],
@@ -110,19 +110,19 @@ with c2:
         Protocolo IO-Link
       </div>
       <div class="channel-row">
-        <span style="color:#4a7a9b">Canal ①</span>
+        <span style="color:#4a7a9b">Canal 1</span>
         <span style="color:#e2eaf4">Velocidade RMS (mm/s)</span>
       </div>
       <div class="channel-row">
-        <span style="color:#4a7a9b">Canal ②</span>
+        <span style="color:#4a7a9b">Canal 2</span>
         <span style="color:#e2eaf4">Aceleração Pico (g)</span>
       </div>
       <div class="channel-row">
-        <span style="color:#4a7a9b">Canal ③</span>
+        <span style="color:#4a7a9b">Canal 3</span>
         <span style="color:#e2eaf4">Aceleração RMS (g)</span>
       </div>
       <div class="channel-row">
-        <span style="color:#4a7a9b">Canal ④</span>
+        <span style="color:#4a7a9b">Canal 4</span>
         <span style="color:#e2eaf4">Temperatura (°C)</span>
       </div>
     </div>
@@ -135,10 +135,10 @@ with c3:
         Hardware Requerido
       </div>
       <div style="font-size:.8rem;color:#4a7a9b;line-height:2">
-        🔩 Sensor VIM32PL-E1AC8<br>
-        🤖 ESP32 Dev Module<br>
-        🔌 Cabo USB-Serial (CP210x)<br>
-        📦 Driver CP210x / CH340
+        Sensor VIM32PL-E1AC8<br>
+        ESP32 Dev Module<br>
+        Cabo USB-Serial (CP210x)<br>
+        Driver CP210x / CH340
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -146,7 +146,7 @@ with c3:
 st.divider()
 
 # ── Leituras ao vivo ──────────────────────────────────────────────────────────
-st.markdown("#### 📊 Leituras em Tempo Real")
+st.markdown("#### Leituras em Tempo Real")
 
 from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=2000, key="iot_refresh")
@@ -192,7 +192,7 @@ if not is_sim:
             arms   = float(last["arms"])
             temp   = float(last["temp"])
             flag_v = int(last["flag"])
-            st.caption(f"📂 Lendo: `{csvs[0]}` · {len(df_live)} amostras")
+            st.caption(f"Lendo: `{csvs[0]}` · {len(df_live)} amostras")
         except Exception as e:
             st.warning(f"Erro ao ler CSV: {e}")
             df_live = pd.DataFrame({"ts":[], "vel":[], "apeak":[], "arms":[], "temp":[], "flag":[], "AX":[], "AY":[], "AZ":[]})
@@ -326,7 +326,7 @@ for col_w, col_y, titulo, cor, unidade, fill_cor in [
 st.divider()
 
 # ── Instruções de conexão ─────────────────────────────────────────────────────
-with st.expander("🔧 Como conectar o hardware real", expanded=False):
+with st.expander("Como conectar o hardware real", expanded=False):
     st.markdown("""
     **1. Instalar driver USB-Serial**
     - CP210x (Silicon Labs) ou CH340 (WCH) — instale o driver da placa que você tem
@@ -359,6 +359,6 @@ with st.expander("🔧 Como conectar o hardware real", expanded=False):
 if is_sim:
     st.markdown("""
     <div style="text-align:center;margin-top:20px;font-size:.72rem;color:#1a3a5a">
-      ⚠️ Modo simulação ativo — dados gerados sinteticamente para demonstração
+      Modo simulação ativo — dados gerados sinteticamente para demonstração
     </div>
     """, unsafe_allow_html=True)

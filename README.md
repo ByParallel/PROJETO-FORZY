@@ -1,175 +1,37 @@
-# Digital TWIN — Monitoramento Industrial em Tempo Real
+# IMS · Forzy — Industrial Monitoring System
 
-> **Sprint 2** — Visualização Operacional, Representação de Ativos e Integração com Hardware Real (ESP32 + MPU6050)
+> **Sprint 2** — Dashboard consolidado, navegação customizada, monitoramento dual-motor em tempo real
 
-Sistema de gêmeo digital industrial construído com Python, Streamlit e SQLite. Monitora motores elétricos em tempo real via sensor inercial MPU6050 acoplado a um ESP32, com análise de vibração conforme **ISO 10816**.
-
----
-
-## Demonstração
-
-### Dashboard Operacional
-O dashboard exibe seis sensores em tempo real com gauges e gráficos históricos. Alertas visuais são acionados automaticamente quando leituras ultrapassam limites operacionais (ex.: temperatura > 85 °C, corrente > 125% nominal).
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  🌡 Temperatura   ⚡ Tensão   〰 Corrente   🔄 RPM   📳 Vibração │
-│     62.3 °C       220 V       4.2 A       2980     1.24 mm/s   │
-├─────────────────────────────────────────────────────────────────┤
-│  [Gauge Temp] [Gauge Corrente] [Gauge Vibração] [Gauge FP]      │
-├─────────────────────────────────────────────────────────────────┤
-│  Histórico ─────────────────────────────────────────────────── │
-│  [Tendências] [Comparação] [Anomalias]                          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Dashboard de Vibração (ESP32 real-time)
-Alimentado diretamente pelo ESP32 via USB-Serial. Auto-refresh a cada 2 s.
-
-```
-Status ISO 10816:  ✅ OK — 1.24 mm/s
-                   ⚠️  ALERTA — 2.61 mm/s
-                   🚨  ALARME — 5.03 mm/s
-
-Faixas coloridas no gráfico temporal:
-  Verde  < 1.8 mm/s  │  Amarelo 1.8–4.5 mm/s  │  Vermelho > 4.5 mm/s
-```
-
-### Análise Espectral (FFT)
-Página dedicada com FFT sobre janelas históricas, pico dominante marcado e histórico de frequências ao longo do tempo.
+Sistema de monitoramento industrial de bombas centrífugas construído com Python e Streamlit. Monitora 2 motores com dados históricos do dataset Forzy, análise espectral FFT, visualização SCADA 2D/3D e integração com ESP32 + MPU6050 em tempo real.
 
 ---
 
-## Stack Tecnológico
+## Stack
 
 | Camada | Tecnologia |
 |--------|------------|
-| Interface | Streamlit 1.35+ |
-| Gráficos | Plotly 5+ |
-| Dados | SQLite + Pandas |
-| Hardware | ESP32 + MPU6050 (I2C) |
-| Serial | PySerial |
+| Interface | Streamlit 1.45.1 |
+| Graficos | Plotly 5+ (WebGL) |
+| Dados | Pandas + forzy.csv + SQLite |
+| Hardware | ESP32-CAM + MPU6050 (I2C) |
+| Serial | PySerial (auto-detect VID/PID) |
 | Linguagem | Python 3.10+ |
-
----
-
-## Arquitetura do Sistema
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        ESP32 (firmware)                     │
-│  MPU6050 → 200 Hz sampling → RMS + FFT → JSON via Serial   │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ USB-Serial (115200 baud)
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    serial_reader.py                         │
-│  • Auto-detecta porta CP210x / CH340                        │
-│  • Converte aceleração RMS (g) → velocidade RMS (mm/s)      │
-│  • Classifica ISO 10816 (OK / Alerta / Alarme)              │
-│  • Persiste em SQLite via database.py                       │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   data/motores.db (SQLite)                  │
-│  tabelas: ativos, leituras                                  │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Streamlit Dashboard                     │
-│  1_Inicio · 2_Dashboard · 3_Espectral                       │
-│  auto-refresh 2 s · gráficos Plotly interativos             │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Estrutura do Projeto
-
-```
-digital_twin/
-├── 1_Inicio.py               # Página inicial
-├── app.py                    # Entrada principal (legado Sprint 2)
-├── database.py               # Camada de dados (SQLite)
-├── serial_reader.py          # Leitor USB-Serial + modo simulação
-├── requirements.txt
-├── executar.bat              # Launcher Windows (abre tudo com 1 clique)
-│
-├── firmware/
-│   └── esp32_mpu6050_rms.ino # Firmware ESP32 — 200 Hz, RMS, JSON
-│
-├── pages/
-│   ├── 1_Navegacao.py        # Hierarquia Planta → Área → Ativo
-│   ├── 2_Dashboard.py        # Sensores em tempo real (vibração ISO 10816)
-│   ├── 3_Espectral.py        # Análise FFT de vibração
-│   ├── 3_Cadastro.py         # CRUD de ativos
-│   ├── 4_RPA.py              # Central de automações RPA
-│   └── 5_Pipeline.py         # Pipeline Placa → Cadastro
-│
-├── rpa/
-│   ├── tag_association.py    # RPA: associação TAG/Localização
-│   ├── record_updater.py     # RPA: atualização de registros
-│   └── nameplate_pipeline.py # RPA: pipeline placa do motor
-│
-├── utils/
-│   ├── mock_data.py          # Gerador de dados simulados realistas
-│   └── charts.py             # Componentes visuais (Plotly)
-│
-└── data/
-    ├── digital_twin.db       # Banco do sistema de ativos
-    └── motores.db            # Banco de leituras do ESP32
-```
 
 ---
 
 ## Como Rodar
 
-### Pré-requisitos
-
-- Python 3.10+
-- Driver USB-Serial instalado: [CP210x](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) ou CH340
-- Arduino IDE (para gravar firmware no ESP32)
-
-### 1. Instalar dependências
-
-```bash
+```powershell
 pip install -r requirements.txt
+python -m streamlit run 1_Inicio.py
 ```
 
-### 2. Gravar firmware no ESP32
+**Com ESP32 conectado:**
+```powershell
+# Terminal 1 — coletor serial
+python Armazenamento_Acelerometro_Bytes_Convertido.py
 
-1. Abra `firmware/esp32_mpu6050_rms.ino` no Arduino IDE
-2. Instale as bibliotecas pelo Library Manager:
-   - `MPU6050` (ElectronicCats ou jrowberg/i2cdevlib)
-   - `arduinoFFT` (opcional — descomente `#define USE_FFT` no firmware)
-3. Selecione **ESP32 Dev Module** e a porta COM correta
-4. Grave e abra o Serial Monitor para verificar o JSON:
-
-```json
-{"ax_rms":0.003821,"ay_rms":0.002104,"az_rms":0.001533,
- "mag_rms":0.004512,"freq_hz":49.80,"peaks":[49.8,99.6],
- "temp_c":38.24,"gx_rms":0.041,"gy_rms":0.038,"gz_rms":0.029}
-```
-
-### 3. Iniciar o sistema
-
-**Opção A — Double-click (recomendado no Windows):**
-```
-executar.bat
-```
-O script pergunta se você quer usar hardware real ou simulação, sobe o `serial_reader.py` em segundo plano e abre o Streamlit.
-
-**Opção B — Manual:**
-```bash
-# Terminal 1: leitor serial (ESP32 conectado)
-python serial_reader.py
-
-# Terminal 1 alternativo: modo simulação (sem hardware)
-python serial_reader.py --simulate
-
-# Terminal 2: dashboard
+# Terminal 2 — dashboard
 python -m streamlit run 1_Inicio.py
 ```
 
@@ -177,88 +39,88 @@ Acesse: **http://localhost:8501**
 
 ---
 
-## Hardware
-claude
-| SDA | GPIO 21 |
-| SCL | GPIO 22 |
-
-> O MPU6050 está configurado em **±4g** (acelerômetro) e **±250°/s** (giroscópio), com filtro passa-baixa DLPF a 44 Hz — ideal para capturar vibração de motores até ~22 Hz.
-
-### Princípio de funcionamento
-
-O firmware coleta **200 amostras por segundo**, remove a componente DC (gravidade) calculando a média da janela, e obtém o **RMS de vibração dinâmica** de cada eixo. A velocidade de vibração em mm/s é calculada no `serial_reader.py` pela fórmula:
+## Estrutura de Navegacao
 
 ```
-v_rms (mm/s) = (a_rms_g × 9806.65) / (2π × f_hz)
+Inicio
+Dashboard
+  Monitoramento   — Motor 1 e Motor 2 ao vivo (dataset ou simulado)
+  Espectral       — FFT + espectrograma parametrizado pelo dado real
+  Operacional     — Analise historica completa do dataset Forzy
+  Historico       — Player/timelapse animado
+SCADA             — Planta 2D + modelo 3D (STP real) com player
+IoT · ESP32       — Leitura ao vivo via USB-Serial
 ```
 
 ---
 
-## Classificação ISO 10816 — Classe I
+## Dashboard Consolidado
 
-Motores de pequeno porte (< 15 kW):
+### Monitoramento
+- Motor 1 e Motor 2 lado a lado com gauges (velocidade, aceleracao, temperatura)
+- Health score e banner de status ISO 10816 por motor
+- Graficos de historico recente (janela deslizante de 120 frames)
+- Fonte selecionavel: Dataset Forzy (player automatico) ou Simulado
+- Auto-refresh configuravel (intervalo + passo de frames)
 
-| Zona | Vibração RMS | Ação |
-|------|-------------|------|
-| ✅ OK | < 1,8 mm/s | Operação normal |
-| ⚠️ Alerta | 1,8 – 4,5 mm/s | Monitorar — planejar manutenção |
-| 🚨 Alarme | > 4,5 mm/s | Parada imediata recomendada |
+### Espectral
+- FFT com fs=1000 Sa/s, amplitude parametrizada pelo RMS real do dataset
+- Espectrograma por janelas sequenciais
+- Marcacao de harmonicas RPM e bandas de falha
+- Fonte: Dataset Forzy ou Simulado
 
----
+### Operacional
+- Timeline, analise estatistica, comparacao M1 x M2, eventos e anomalias
 
-## Banco de Dados
-
-### `leituras` (motores.db)
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `ativo_id` | TEXT | Identificador do motor (ex: `MTR-MPU-01`) |
-| `fonte` | TEXT | `esp32` ou `simulado` |
-| `vibracao_mm_s` | REAL | Velocidade RMS de vibração |
-| `temperatura_c` | REAL | Temperatura interna do MPU6050 |
-| `freq_hz` | REAL | Frequência dominante de vibração |
-| `ax_rms / ay_rms / az_rms` | REAL | Aceleração RMS por eixo (g) |
-| `mag_rms` | REAL | Magnitude vetorial RMS (g) |
-| `flag_anomalia` | INT | 0=OK · 1=Alerta · 2=Alarme |
-| `coletado_em` | TEXT | Timestamp UTC da coleta |
-
-### Hierarquia completa (digital_twin.db)
-
-```
-plantas ──< areas ──< ativos ──< leituras_sensores
-                                 log_rpa
-```
+### Historico
+- Player animado com controle de velocidade
 
 ---
 
-## Módulos da Sprint 2
+## ESP32 + MPU6050
 
-| Módulo | Arquivo | Descrição |
+```
+ESP32-CAM (AI Thinker) — COM auto-detectada
+MPU6050 (I2C) → AX, AY, AZ (g) + GX, GY, GZ (dps)
+Taxa: 5 Sa/s (delay 200 ms no firmware)
+Saida serial: AX (g): 0.012 | AY (g): 0.974 | ...
+```
+
+O coletor serial salva em `dados/dados_YYYY-MM-DD_HH-MM-SS.csv`. A pagina IoT le o CSV mais recente a cada 2s e remove o componente DC de gravidade antes de calcular o RMS dinamico.
+
+**Importante:** porta aberta com `rts=False, dtr=False` — caso contrario o ESP32 entra em modo bootloader.
+
+---
+
+## Classificacao ISO 10816
+
+| Zona | Velocidade RMS | Acao |
+|------|---------------|------|
+| Normal | < 1,8 mm/s | Operacao normal |
+| Alerta | 1,8 – 4,5 mm/s | Monitorar, planejar manutencao |
+| Alarme | > 4,5 mm/s | Parada imediata recomendada |
+
+---
+
+## Dataset Forzy
+
+`data/forzy.csv` — separador `;`, `skiprows=3`
+
+| Coluna | Unidade | Descricao |
 |--------|---------|-----------|
-| Início | `1_Inicio.py` | Visão geral e instruções |
-| Navegação | `pages/1_Navegacao.py` | Hierarquia Planta → Área → Ativo com mapa |
-| Dashboard | `pages/2_Dashboard.py` | Vibração ISO 10816 + sensores em tempo real |
-| Espectral | `pages/3_Espectral.py` | FFT de vibração com pico dominante |
-| Cadastro | `pages/3_Cadastro.py` | CRUD de ativos industriais |
-| RPA | `pages/4_RPA.py` | Associação automática TAG/Localização |
-| Pipeline | `pages/5_Pipeline.py` | OCR Placa → Normalização → Banco |
+| timestamp | — | Data/hora da medicao |
+| m1_vel | mm/s | Velocidade RMS Motor 1 |
+| m1_acel | g | Aceleracao RMS Motor 1 |
+| m1_temp | C | Temperatura Motor 1 |
+| m2_vel | mm/s | Velocidade RMS Motor 2 |
+| m2_acel | g | Aceleracao RMS Motor 2 |
+| m2_temp | C | Temperatura Motor 2 |
+
+Os valores sao RMS agregados (nao waveform bruto). A FFT espectral usa esses valores para parametrizar um sinal sintetico em 1000 Sa/s.
 
 ---
 
-## Simulação (sem hardware)
+## Licenca
 
-Para desenvolver e testar sem o ESP32:
-
-```bash
-python serial_reader.py --simulate
-# ou com intervalo personalizado:
-python serial_reader.py --simulate --rate 0.5
-```
-
-O modo simulação gera leituras realistas com variação senoidal lenta de vibração, ruído gaussiano e temperaturas plausíveis — adequado para demonstrações e testes de UI.
-
----
-
-## Licença
-
-Projeto acadêmico — uso livre para fins educacionais.
+Projeto academico — uso livre para fins educacionais.  
+Sprint 2 · Forzy–Promon · 2026

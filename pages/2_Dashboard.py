@@ -11,323 +11,456 @@ from datetime import datetime
 
 st.set_page_config(page_title="Dashboard — IMS Forzy", layout="wide")
 import sys; sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.theme import apply as _apply_theme, sidebar_header as _sh
-_apply_theme(); _sh()
+from utils.theme import apply as _apply_theme, sidebar_nav as _snav
+_apply_theme(); _snav("dashboard")
 
 import database
 from utils.mock_data import gerar_leitura_simulada, gerar_historico_simulado
 from utils.mock_data import MODO_NORMAL, MODO_DESBALANCO, MODO_CAVITACAO, MODO_DESALINHAMENTO
 
-# ── Autorefresh opcional ──────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("#### ⚙️ Configurações Globais")
-    auto_ref = st.toggle("Auto-refresh (Monitoramento)", value=True)
-    if auto_ref:
-        from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=2000, key="dash_global_refresh")
+# ── Detecta tab ativo via query_params + JS ───────────────────────────────────
+import streamlit.components.v1 as _cv1
+
+# Lê o tab ativo da URL (?tab=0,1,2,3)
+_active_tab = int(st.query_params.get("tab", "0"))
+
+# Se veio da sidebar, navega para o tab certo e atualiza query param
+_nav_tab = st.session_state.pop("_dash_tab", None)
+if _nav_tab is not None:
+    st.query_params["tab"] = str(_nav_tab)
+    _active_tab = _nav_tab
+
+# JS: ao clicar em qualquer tab, atualiza ?tab=N na URL (dispara rerun)
+_cv1.html("""<script>
+(function(){
+    function attachListeners(){
+        var tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+        if(!tabs.length){ setTimeout(attachListeners, 100); return; }
+        tabs.forEach(function(btn, i){
+            btn.addEventListener('click', function(){
+                var url = new URL(window.parent.location.href);
+                url.searchParams.set('tab', i);
+                window.parent.history.replaceState(null, '', url.toString());
+            });
+        });
+    }
+    setTimeout(attachListeners, 200);
+})();
+</script>""", height=0)
+
+# Se tab ativo != 0, força o clique via JS
+if _active_tab:
+    _cv1.html(f"""<script>
+    (function(){{
+        function clickTab(){{
+            var t = window.parent.document.querySelectorAll('button[role="tab"]');
+            if(t.length > {_active_tab}) t[{_active_tab}].click();
+            else setTimeout(clickTab, 40);
+        }}
+        setTimeout(clickTab, 100);
+    }})();
+    </script>""", height=0)
 
 # ── Tabs principais ───────────────────────────────────────────────────────────
 tab_mon, tab_esp, tab_oper, tab_hist = st.tabs([
-    "📊 Monitoramento",
-    "🔬 Espectral",
-    "📈 Operacional",
-    "⏱ Histórico",
+    "Monitoramento", "Espectral", "Operacional", "Histórico",
 ])
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 1 — MONITORAMENTO
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_mon:
-    ATIVO_ID = "MTR-VIM32-01"
-    LIMITES = {
+    # Autorefresh APENAS se o tab Monitoramento estiver ativo
+    from streamlit_autorefresh import st_autorefresh as _sar
+
+    # ── Controles de topo ─────────────────────────────────────────────────────
+    _mc1, _mc2, _mc3, _mc4, _mc5 = st.columns([2, 1, 1, 1, 1])
+    with _mc1:
+        _fonte_mon = st.radio("Fonte", ["Dataset Forzy", "Simulado"],
+                              horizontal=True, key="mon_fonte")
+    with _mc2:
+        _auto = st.toggle("Auto-refresh", value=True, key="mon_autoref")
+    with _mc3:
+        _interval_ms = st.selectbox("Intervalo", [1000, 2000, 5000], index=1,
+                                    format_func=lambda x: f"{x//1000}s",
+                                    key="mon_interval")
+    with _mc4:
+        _step = st.selectbox("Passo", [1, 5, 10, 20], index=1,
+                             format_func=lambda x: f"+{x} frames",
+                             key="mon_step")
+    if _auto and _active_tab == 0:
+        _sar(interval=_interval_ms, key="mon_refresh")
+
+    # ── Carrega dataset ───────────────────────────────────────────────────────
+    _MON_CSV = Path(__file__).parent.parent / "data" / "forzy.csv"
+
+    @st.cache_data
+    def _load_mon(path):
+        df = pd.read_csv(path, sep=";", skiprows=3, header=None,
+            usecols=[0,3,4,5,6,7,8],
+            names=["timestamp","m1_vel","m1_acel","m1_temp","m2_vel","m2_acel","m2_temp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        for c in df.columns[1:]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna(subset=["m1_vel","m2_vel"]).sort_values("timestamp").reset_index(drop=True)
+
+    if _fonte_mon == "Dataset Forzy" and _MON_CSV.exists():
+        _df_mon = _load_mon(str(_MON_CSV))
+        _N_mon  = len(_df_mon)
+
+        # Frame avança _step posições por rerun
+        if "mon_fidx" not in st.session_state:
+            st.session_state.mon_fidx = 0
+        if _auto and _active_tab == 0:
+            st.session_state.mon_fidx = (st.session_state.mon_fidx + _step) % _N_mon
+        _row = _df_mon.iloc[st.session_state.mon_fidx]
+
+        m1_vel  = float(_row.m1_vel);  m1_acel = float(_row.m1_acel); m1_temp = float(_row.m1_temp)
+        m2_vel  = float(_row.m2_vel);  m2_acel = float(_row.m2_acel); m2_temp = float(_row.m2_temp)
+        _ts_label = _row["timestamp"].strftime("%d/%m/%Y  %H:%M:%S")
+        _prog = st.session_state.mon_fidx / max(_N_mon - 1, 1)
+        st.progress(_prog, text=f"Dataset: frame {st.session_state.mon_fidx+1}/{_N_mon}  —  {_ts_label}")
+    else:
+        # Simulado: gera leitura nova a cada rerun
+        if "demo_t" not in st.session_state:
+            st.session_state.demo_t = 0.0
+        st.session_state.demo_t += 1.0
+        _modo_sim = st.selectbox("Cenário simulado",
+            [MODO_NORMAL, MODO_DESBALANCO, MODO_CAVITACAO, MODO_DESALINHAMENTO],
+            format_func=lambda x: {"normal":"Normal","desbalanco":"Desbalanceamento",
+                                   "cavitacao":"Cavitação","desalinhamento":"Desalinhamento"}[x],
+            key="mon_sim_modo")
+        _r1 = gerar_leitura_simulada(t=st.session_state.demo_t, modo=_modo_sim)
+        _r2 = gerar_leitura_simulada(t=st.session_state.demo_t + 17.3, modo=_modo_sim)
+        m1_vel  = float(_r1.get("vibracao_mm_s", 0)); m1_acel = float(_r1.get("a_peak_g", 0)); m1_temp = float(_r1.get("temperatura_c", 25))
+        m2_vel  = float(_r2.get("vibracao_mm_s", 0)); m2_acel = float(_r2.get("a_peak_g", 0)); m2_temp = float(_r2.get("temperatura_c", 25))
+        _ts_label = datetime.now().strftime("%H:%M:%S")
+        st.caption(f"Simulado — {_ts_label}")
+
+    # ── Norma ISO ─────────────────────────────────────────────────────────────
+    LIMITES_MON = {
         "ISO 10816 (< 15 kW)":  {"alerta": 1.8, "alarme": 4.5},
         "ISO 20816 (15–75 kW)": {"alerta": 2.3, "alarme": 7.1},
     }
     FLAG_COLOR = {0: "#2ecc71", 1: "#f39c12", 2: "#e74c3c"}
     FLAG_LABEL = {0: "OK", 1: "ALERTA", 2: "ALARME"}
 
-    # Controles inline
-    ctrl1, ctrl2, ctrl3 = st.columns([2, 2, 3])
-    with ctrl1:
-        norma = st.selectbox("Norma ISO", list(LIMITES.keys()), key="mon_norma")
-    with ctrl2:
-        modo_demo = st.toggle("Modo Demo", value=True, key="mon_demo")
-    with ctrl3:
-        if modo_demo:
-            modo_falha = st.selectbox("Cenário", [MODO_NORMAL, MODO_DESBALANCO, MODO_CAVITACAO, MODO_DESALINHAMENTO],
-                format_func=lambda x: {"normal":"✅ Normal","desbalanco":"⚠️ Desbalanceamento",
-                                       "cavitacao":"🌊 Cavitação","desalinhamento":"❌ Desalinhamento"}[x],
-                key="mon_falha")
-        else:
-            modo_falha = MODO_NORMAL
+    _nc1, _nc2 = st.columns([3, 1])
+    with _nc1:
+        _norma = st.selectbox("Norma ISO", list(LIMITES_MON.keys()), key="mon_norma")
+    with _nc2:
+        st.caption(_ts_label)
 
-    ISO_ALERTA = LIMITES[norma]["alerta"]
-    ISO_ALARME = LIMITES[norma]["alarme"]
+    _ISO_A  = LIMITES_MON[_norma]["alerta"]
+    _ISO_AL = LIMITES_MON[_norma]["alarme"]
+    _TEMP_A, _TEMP_AL = 35.0, 42.0
+    _ACEL_A, _ACEL_AL = 0.25, 0.45
 
-    # Dados
-    if modo_demo:
-        if "demo_hist" not in st.session_state:
-            st.session_state.demo_hist = gerar_historico_simulado(300, incluir_falha=False)
-            st.session_state.demo_t = 300.0
-        st.session_state.demo_t += 1.0
-        nova = gerar_leitura_simulada(t=st.session_state.demo_t, modo=modo_falha)
-        st.session_state.demo_hist.append(nova)
-        if len(st.session_state.demo_hist) > 400:
-            st.session_state.demo_hist = st.session_state.demo_hist[-400:]
-        rows = st.session_state.demo_hist
-    else:
-        rows = database.get_leituras(ativo_id=ATIVO_ID, limit=300)
-        if not rows:
-            st.warning("Sem dados no banco. Ative o **Modo Demo**.")
-            st.stop()
+    def _flag(v, a, al): return 2 if v >= al else (1 if v >= a else 0)
 
-    df_mon = pd.DataFrame(rows)
-    if "coletado_em" in df_mon.columns:
-        df_mon["coletado_em"] = pd.to_datetime(df_mon["coletado_em"])
-        df_mon = df_mon.sort_values("coletado_em")
-    else:
-        df_mon["coletado_em"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_mon), freq="2s")
+    def _health(vel, acel, temp):
+        return max(0, round(100
+            - 60*min(vel/_ISO_AL, 1.0)
+            - 25*min(max((temp-35)/45, 0), 1.0)
+            - 15*min(acel/_ACEL_AL, 1.0)))
 
-    ultima = df_mon.iloc[-1]
-    vib   = float(ultima.get("vibracao_mm_s") or 0)
-    temp  = float(ultima.get("temperatura_c") or 0)
-    apeak = float(ultima.get("a_peak_g") or 0)
-    arms  = float(ultima.get("mag_rms") or 0)
-    freq  = float(ultima.get("freq_hz") or 0)
-    flag_atual = 2 if vib >= ISO_ALARME else (1 if vib >= ISO_ALERTA else 0)
-
-    # Health Score
-    vib_ratio  = min(vib / ISO_ALARME, 1.0)
-    temp_ratio = min(max((temp - 35) / 45, 0), 1.0)
-    peak_ratio = min(apeak / 5.0, 1.0)
-    health = max(0, round(100 - 60*vib_ratio - 25*temp_ratio - 15*peak_ratio))
-    health_cor = "#2ecc71" if health >= 70 else ("#f39c12" if health >= 40 else "#e74c3c")
-
-    # Banner
-    cor = FLAG_COLOR[flag_atual]
-    st.markdown(f'<div style="border-radius:8px;padding:10px 20px;font-size:1rem;font-weight:bold;'
-                f'text-align:center;color:white;background:{cor};margin:8px 0">'
-                f'Status {norma}: {FLAG_LABEL[flag_atual]} — {vib:.3f} mm/s</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        f'<div style="display:flex;align-items:center;gap:12px;margin:6px 0 14px 0">'
-        f'<span style="color:#aaa;font-size:.9rem">Health Score</span>'
-        f'<div style="flex:1;background:#333;border-radius:8px;height:14px;overflow:hidden">'
-        f'<div style="width:{health}%;background:{health_cor};height:14px;border-radius:8px"></div></div>'
-        f'<span style="color:{health_cor};font-weight:bold">{health}/100</span></div>',
-        unsafe_allow_html=True)
-
-    # KPIs
-    k1,k2,k3,k4,k5,k6 = st.columns(6)
-    k1.metric("Vibração RMS",    f"{vib:.3f} mm/s", FLAG_LABEL[flag_atual], delta_color="off")
-    k2.metric("Acel. Pico",      f"{apeak:.3f} g")
-    k3.metric("Acel. RMS",       f"{arms:.4f} g")
-    k4.metric("Temperatura",     f"{temp:.1f} °C")
-    k5.metric("Freq. dominante", f"{freq:.1f} Hz")
-    k6.metric("Alarmes", str(int((df_mon["flag_anomalia"] >= 2).sum() if "flag_anomalia" in df_mon.columns else 0)))
-
-    st.divider()
-
-    # Gauges
-    st.subheader("Gauges — Estado Atual")
-    g1,g2,g3,g4 = st.columns(4)
-
-    def _gauge(val, title, maximo, unidade, lim_a, lim_al):
-        fv = 2 if val>=lim_al else (1 if val>=lim_a else 0)
+    def _gauge_fig(val, title, maximo, unidade, lim_a, lim_al, key):
+        fv = _flag(val, lim_a, lim_al)
         fig = go.Figure(go.Indicator(
-            mode="gauge+number", value=val,
-            title={"text":title,"font":{"size":13}},
-            number={"suffix":f" {unidade}","font":{"size":18}},
-            gauge={"axis":{"range":[0,maximo]},
-                   "bar":{"color":FLAG_COLOR[fv]},
-                   "steps":[{"range":[0,lim_a],"color":"#1a2e1a"},
-                             {"range":[lim_a,lim_al],"color":"#2e2200"},
-                             {"range":[lim_al,maximo],"color":"#2e0d0d"}],
-                   "threshold":{"line":{"color":"#e74c3c","width":3},"thickness":0.85,"value":lim_al}},
+            mode="gauge+number", value=round(val, 3),
+            title={"text": title, "font": {"size": 12}},
+            number={"suffix": f" {unidade}", "font": {"size": 16}},
+            gauge={
+                "axis": {"range": [0, maximo]},
+                "bar":  {"color": FLAG_COLOR[fv]},
+                "steps": [
+                    {"range": [0, lim_a],  "color": "#1a2e1a"},
+                    {"range": [lim_a, lim_al], "color": "#2e2200"},
+                    {"range": [lim_al, maximo], "color": "#2e0d0d"},
+                ],
+                "threshold": {"line": {"color": "#e74c3c", "width": 3},
+                              "thickness": 0.85, "value": lim_al},
+            },
         ))
-        fig.update_layout(height=220, margin=dict(l=20,r=20,t=30,b=10),
+        fig.update_layout(height=200, margin=dict(l=14,r=14,t=34,b=8),
                           paper_bgcolor="rgba(0,0,0,0)", font_color="#eee")
         return fig
 
-    with g1: st.plotly_chart(_gauge(vib,"Vibração RMS (mm/s)",max(ISO_ALARME*2,10),"mm/s",ISO_ALERTA,ISO_ALARME), use_container_width=True, key="mon_g1")
-    with g2: st.plotly_chart(_gauge(apeak,"Acel. Pico (g)",5.0,"g",0.3,0.5), use_container_width=True, key="mon_g2")
-    with g3: st.plotly_chart(_gauge(arms,"Acel. RMS (g)",3.0,"g",0.2,0.4), use_container_width=True, key="mon_g3")
-    with g4: st.plotly_chart(_gauge(temp,"Temperatura (°C)",85.0,"°C",60.0,75.0), use_container_width=True, key="mon_g4")
+    def _motor_card(col, nome, vel, acel, temp, prefix):
+        fv  = _flag(vel,  _ISO_A, _ISO_AL)
+        fa  = _flag(acel, _ACEL_A, _ACEL_AL)
+        ft  = _flag(temp, _TEMP_A, _TEMP_AL)
+        h   = _health(vel, acel, temp)
+        hcor = "#2ecc71" if h>=70 else ("#f39c12" if h>=40 else "#e74c3c")
+        with col:
+            # Banner status
+            st.markdown(
+                f'<div style="border-radius:8px;padding:8px 16px;font-size:.95rem;font-weight:700;'
+                f'text-align:center;color:#fff;background:{FLAG_COLOR[fv]};margin-bottom:8px">'
+                f'{nome} — {FLAG_LABEL[fv]}</div>', unsafe_allow_html=True)
+            # Health bar
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+                f'<span style="font-size:.78rem;color:#aaa;white-space:nowrap">Health Score</span>'
+                f'<div style="flex:1;background:#1a2535;border-radius:6px;height:10px;overflow:hidden">'
+                f'<div style="width:{h}%;background:{hcor};height:10px;border-radius:6px"></div></div>'
+                f'<span style="color:{hcor};font-weight:700;font-size:.85rem">{h}/100</span></div>',
+                unsafe_allow_html=True)
+            # KPIs
+            ka, kb, kc = st.columns(3)
+            ka.metric("Velocidade RMS", f"{vel:.3f} mm/s",
+                      FLAG_LABEL[fv], delta_color="off")
+            kb.metric("Aceleração", f"{acel:.3f} g",
+                      FLAG_LABEL[fa], delta_color="off")
+            kc.metric("Temperatura", f"{temp:.1f} °C",
+                      FLAG_LABEL[ft], delta_color="off")
+            # Gauges
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                st.plotly_chart(_gauge_fig(vel, "Vel RMS (mm/s)",
+                    max(_ISO_AL*2,10), "mm/s", _ISO_A, _ISO_AL, f"{prefix}_gv"),
+                    use_container_width=True, key=f"{prefix}_gv")
+            with g2:
+                st.plotly_chart(_gauge_fig(acel, "Aceleração (g)",
+                    1.0, "g", _ACEL_A, _ACEL_AL, f"{prefix}_ga"),
+                    use_container_width=True, key=f"{prefix}_ga")
+            with g3:
+                st.plotly_chart(_gauge_fig(temp, "Temperatura (°C)",
+                    85.0, "°C", _TEMP_A, _TEMP_AL, f"{prefix}_gt"),
+                    use_container_width=True, key=f"{prefix}_gt")
 
+    st.markdown("---")
+    col_m1, col_sep, col_m2 = st.columns([10, 1, 10])
+    col_sep.markdown(
+        '<div style="border-left:1px solid #0f2a45;height:100%;min-height:300px"></div>',
+        unsafe_allow_html=True)
+
+    _motor_card(col_m1, "Motor 1", m1_vel, m1_acel, m1_temp, "m1")
+    _motor_card(col_m2, "Motor 2", m2_vel, m2_acel, m2_temp, "m2")
+
+    # ── Gráficos de histórico recente (janela deslizante) ─────────────────────
     st.divider()
+    st.subheader("Histórico Recente")
 
-    # Gráfico vibração
-    st.subheader("Velocidade de Vibração RMS — Histórico")
-    fig_vib = go.Figure()
-    fig_vib.add_trace(go.Scatter(x=df_mon["coletado_em"], y=df_mon["vibracao_mm_s"],
-        mode="lines", name="Vibração RMS", line=dict(color="#3498db",width=1.5),
-        fill="tozeroy", fillcolor="rgba(52,152,219,0.08)"))
-    vib_max_plot = max(ISO_ALARME*2, df_mon["vibracao_mm_s"].max()*1.2)
-    fig_vib.add_hrect(y0=0, y1=ISO_ALERTA, fillcolor="#2ecc71", opacity=0.07,
-                      annotation_text="OK", annotation_position="left")
-    fig_vib.add_hrect(y0=ISO_ALERTA, y1=ISO_ALARME, fillcolor="#f39c12", opacity=0.07,
-                      annotation_text="Alerta", annotation_position="left")
-    fig_vib.add_hrect(y0=ISO_ALARME, y1=vib_max_plot, fillcolor="#e74c3c", opacity=0.07,
-                      annotation_text="Alarme", annotation_position="left")
-    fig_vib.add_hline(y=ISO_ALERTA, line_dash="dash", line_color="#f39c12", line_width=1)
-    fig_vib.add_hline(y=ISO_ALARME, line_dash="dash", line_color="#e74c3c", line_width=1)
-    fig_vib.update_layout(height=300, xaxis_title="Tempo", yaxis_title="mm/s",
-                          hovermode="x unified", margin=dict(l=50,r=20,t=30,b=40),
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font_color="#eee", xaxis=dict(gridcolor="#222"), yaxis=dict(gridcolor="#222"))
-    st.plotly_chart(fig_vib, use_container_width=True, key="mon_vib")
+    _PLOT_STYLE = dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#cdd9e5", margin=dict(l=50,r=20,t=36,b=40),
+        hovermode="x unified", height=240,
+        xaxis=dict(gridcolor="#1a2d3a"),
+        yaxis=dict(gridcolor="#1a2d3a"),
+        legend=dict(orientation="h", y=1.12, font=dict(size=11)),
+    )
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("Aceleração de Pico (g)")
-        y_apeak = df_mon.get("a_peak_g", df_mon.get("mag_rms", pd.Series([0]*len(df_mon))))
-        fig_pk = go.Figure(go.Scatter(x=df_mon["coletado_em"], y=y_apeak,
-            mode="lines", line=dict(color="#9b59b6",width=1.4),
-            fill="tozeroy", fillcolor="rgba(155,89,182,0.07)"))
-        fig_pk.add_hline(y=0.3, line_dash="dash", line_color="#f39c12", line_width=1)
-        fig_pk.add_hline(y=0.5, line_dash="dash", line_color="#e74c3c", line_width=1)
-        fig_pk.update_layout(height=260, margin=dict(l=50,r=20,t=20,b=40),
-                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                             font_color="#eee", xaxis=dict(gridcolor="#222"), yaxis=dict(gridcolor="#222"))
-        st.plotly_chart(fig_pk, use_container_width=True, key="mon_pk")
+    if _fonte_mon == "Dataset Forzy" and _MON_CSV.exists():
+        _win = 120  # últimos N frames visíveis
+        _i0  = max(0, st.session_state.mon_fidx - _win)
+        _i1  = st.session_state.mon_fidx + 1
+        _df_win = _df_mon.iloc[_i0:_i1]
+        _tx = _df_win["timestamp"]
+    else:
+        # Simulado: acumula histórico em session_state
+        if "sim_hist" not in st.session_state:
+            st.session_state.sim_hist = []
+        st.session_state.sim_hist.append({
+            "ts": datetime.now(), "m1_vel": m1_vel, "m1_acel": m1_acel, "m1_temp": m1_temp,
+            "m2_vel": m2_vel, "m2_acel": m2_acel, "m2_temp": m2_temp,
+        })
+        if len(st.session_state.sim_hist) > 120:
+            st.session_state.sim_hist = st.session_state.sim_hist[-120:]
+        _df_win = pd.DataFrame(st.session_state.sim_hist)
+        _tx = _df_win["ts"]
 
-    with col_b:
-        st.subheader("Temperatura (°C)")
-        fig_temp = go.Figure(go.Scatter(x=df_mon["coletado_em"], y=df_mon["temperatura_c"],
-            mode="lines", line=dict(color="#e67e22",width=1.5),
-            fill="tozeroy", fillcolor="rgba(230,126,34,0.07)"))
-        fig_temp.add_hline(y=60, line_dash="dash", line_color="#f39c12", line_width=1)
-        fig_temp.add_hline(y=75, line_dash="dash", line_color="#e74c3c", line_width=1)
-        fig_temp.update_layout(height=260, margin=dict(l=50,r=20,t=20,b=40),
-                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                               font_color="#eee", xaxis=dict(gridcolor="#222"), yaxis=dict(gridcolor="#222"))
-        st.plotly_chart(fig_temp, use_container_width=True, key="mon_temp")
+    _ISO_A_plot  = LIMITES_MON[_norma]["alerta"]
+    _ISO_AL_plot = LIMITES_MON[_norma]["alarme"]
 
-    st.subheader("Distribuição Estatística — Vibração RMS")
-    fig_hist_mon = px.histogram(df_mon, x="vibracao_mm_s", nbins=40,
-                                color_discrete_sequence=["#3498db"],
-                                labels={"vibracao_mm_s":"Vibração RMS (mm/s)"})
-    fig_hist_mon.add_vline(x=ISO_ALERTA, line_dash="dash", line_color="#f39c12")
-    fig_hist_mon.add_vline(x=ISO_ALARME, line_dash="dash", line_color="#e74c3c")
-    fig_hist_mon.update_layout(height=240, margin=dict(l=40,r=20,t=20,b=30),
-                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#eee")
-    st.plotly_chart(fig_hist_mon, use_container_width=True, key="mon_hist")
+    def _line_chart(y1, y2, title, yunit, la, lal, key):
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=_tx, y=y1, mode="lines", name="Motor 1",
+                                   line=dict(color="#3498db", width=1.5)))
+        fig.add_trace(go.Scattergl(x=_tx, y=y2, mode="lines", name="Motor 2",
+                                   line=dict(color="#9b59b6", width=1.5)))
+        if la:
+            fig.add_hline(y=la,  line_dash="dot", line_color="#f39c12", line_width=1)
+        if lal:
+            fig.add_hline(y=lal, line_dash="dot", line_color="#e74c3c", line_width=1)
+        fig.update_layout(title=dict(text=f"{title} ({yunit})", font=dict(size=13)),
+                          **_PLOT_STYLE)
+        st.plotly_chart(fig, use_container_width=True, key=key)
 
-    with st.expander("Últimas leituras brutas"):
-        cols_show = [c for c in ["coletado_em","vibracao_mm_s","a_peak_g","mag_rms",
-                                  "freq_hz","temperatura_c","flag_anomalia","fonte"] if c in df_mon.columns]
-        st.dataframe(df_mon[cols_show].tail(50).iloc[::-1], use_container_width=True)
+    gc1, gc2, gc3 = st.columns(3)
+    with gc1:
+        _line_chart(_df_win["m1_vel"], _df_win["m2_vel"],
+                    "Velocidade RMS", "mm/s", _ISO_A_plot, _ISO_AL_plot, "mon_chart_vel")
+    with gc2:
+        _line_chart(_df_win["m1_acel"], _df_win["m2_acel"],
+                    "Aceleração", "g", 0.25, 0.45, "mon_chart_acel")
+    with gc3:
+        _line_chart(_df_win["m1_temp"], _df_win["m2_temp"],
+                    "Temperatura", "°C", 35.0, 42.0, "mon_chart_temp")
+
+    with st.expander("Últimas leituras"):
+        _cols_show = [c for c in ["timestamp","m1_vel","m1_acel","m1_temp","m2_vel","m2_acel","m2_temp"]
+                      if c in _df_win.columns]
+        st.dataframe(_df_win[_cols_show].iloc[::-1].head(50), use_container_width=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 2 — ESPECTRAL
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_esp:
-    st.subheader("🔬 Análise Espectral de Vibração")
-    st.caption("FFT simulada — sensor VIM32PL (faixa real 10–1000 Hz)")
+    st.subheader("Análise Espectral de Vibração")
 
+    # ── Carrega dataset ────────────────────────────────────────────────────────
+    _ESP_CSV = Path(__file__).parent.parent / "data" / "forzy.csv"
+
+    @st.cache_data
+    def _load_esp(path):
+        df = pd.read_csv(path, sep=";", skiprows=3, header=None,
+            usecols=[0,3,4,5,6,7,8],
+            names=["timestamp","m1_vel","m1_acel","m1_temp","m2_vel","m2_acel","m2_temp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        for c in df.columns[1:]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna(subset=["m1_acel","m2_acel"]).sort_values("timestamp").reset_index(drop=True)
+
+    _df_esp = _load_esp(str(_ESP_CSV)) if _ESP_CSV.exists() else None
+
+    # ── Controles ─────────────────────────────────────────────────────────────
     ec1, ec2, ec3, ec4 = st.columns(4)
-    with ec1: rpm = st.slider("RPM", 1000, 4000, 2980, 10, key="esp_rpm")
-    with ec2: modo_esp = st.selectbox("Cenário", [MODO_NORMAL, MODO_DESBALANCO, MODO_CAVITACAO, MODO_DESALINHAMENTO],
-                  format_func=lambda x: {"normal":"✅ Normal","desbalanco":"⚠️ Desbalanceamento",
-                                         "cavitacao":"🌊 Cavitação","desalinhamento":"❌ Desalinhamento"}[x], key="esp_modo")
-    with ec3: fs = st.selectbox("Amostragem (Sa/s)", [200, 500, 1000], key="esp_fs")
-    with ec4: janela_s = st.slider("Janela (s)", 2, 20, 5, key="esp_janela")
+    with ec1:
+        _fonte_esp = st.radio("Fonte", ["Dataset Forzy", "Simulado"], horizontal=True, key="esp_fonte")
+    with ec2:
+        _motor_esp = st.selectbox("Motor", ["Motor 1", "Motor 2"], key="esp_motor")
+    with ec3:
+        _rpm_esp = st.slider("RPM (para harmônicas)", 500, 4000, 1780, 10, key="esp_rpm")
+    with ec4:
+        _janela_n = st.slider("Amostras na janela FFT", 64, 1024, 256, 64, key="esp_janela")
 
     ec5, ec6 = st.columns(2)
-    with ec5: mostrar_harmonicas = st.toggle("Marcar harmônicas RPM", value=True, key="esp_harm")
-    with ec6: mostrar_bandas = st.toggle("Marcar bandas de falha", value=True, key="esp_bandas")
+    with ec5: _mostrar_harm = st.toggle("Marcar harmônicas RPM", value=True, key="esp_harm")
+    with ec6: _mostrar_bandas = st.toggle("Marcar bandas de falha", value=True, key="esp_bandas")
 
-    freq_rot = rpm / 60.0
+    _freq_rot = _rpm_esp / 60.0
+    _col_acel = "m1_acel" if _motor_esp == "Motor 1" else "m2_acel"
 
-    def _gerar_sinal(fs, dur, modo, freq_rot):
-        rng = np.random.default_rng(seed=42)
-        N = int(fs * dur)
-        t = np.linspace(0, dur, N, endpoint=False)
-        sinal = rng.normal(0, 0.005, N)
-        if modo == MODO_NORMAL:
-            sinal += 0.04*np.sin(2*np.pi*freq_rot*t) + 0.01*np.sin(2*np.pi*freq_rot*2*t)
-        elif modo == MODO_DESBALANCO:
-            sinal += 0.18*np.sin(2*np.pi*freq_rot*t) + 0.04*np.sin(2*np.pi*freq_rot*2*t) + 0.01*np.sin(2*np.pi*freq_rot*3*t)
-        elif modo == MODO_CAVITACAO:
-            sinal += rng.normal(0,0.05,N) + 0.06*np.sin(2*np.pi*freq_rot*0.5*t) + 0.03*np.sin(2*np.pi*freq_rot*t)
-        elif modo == MODO_DESALINHAMENTO:
-            sinal += 0.05*np.sin(2*np.pi*freq_rot*t) + 0.16*np.sin(2*np.pi*freq_rot*2*t) + 0.07*np.sin(2*np.pi*freq_rot*3*t)
-        return sinal
+    # ── Sinal para FFT ────────────────────────────────────────────────────────
+    # O forzy.csv contém valores RMS agregados (~1 Sa/s) — não waveform bruto.
+    # No modo Dataset usamos o RMS medido para parametrizar amplitude do sinal
+    # sintético, mantendo fs adequado para FFT de vibração.
+    _fs_est = 1000.0  # Sa/s para síntese (Nyquist 500 Hz — faixa de vibração)
+    _rng_esp = np.random.default_rng(int(abs(_freq_rot * 100)))
+    _t_esp = np.linspace(0, _janela_n / _fs_est, _janela_n, endpoint=False)
 
-    sinal = _gerar_sinal(fs, janela_s, modo_esp, freq_rot)
-    N = len(sinal)
-    sinal -= sinal.mean()
-    sinal_w = sinal * np.hanning(N)
-    freqs = np.fft.rfftfreq(N, d=1.0/fs)
-    amplitudes = np.abs(np.fft.rfft(sinal_w)) * 2 / N
-    idx_pico = np.argmax(amplitudes[1:]) + 1
-    freq_pico = freqs[idx_pico]
-    amp_pico  = amplitudes[idx_pico]
+    if _fonte_esp == "Dataset Forzy" and _df_esp is not None and len(_df_esp) > 0:
+        # Amplitude base = RMS medido pelo sensor no dataset
+        _acel_rms = float(_df_esp[_col_acel].median())
+        _vel_col   = "m1_vel" if _motor_esp == "Motor 1" else "m2_vel"
+        _vel_rms   = float(_df_esp[_vel_col].median())
+        # Sinal sintético com amplitude proporcional ao valor real
+        _amp1x = _acel_rms * 0.8
+        _amp2x = _acel_rms * 0.2
+        _sinal = (_rng_esp.normal(0, _acel_rms * 0.05, _janela_n)
+                  + _amp1x * np.sin(2*np.pi*_freq_rot*_t_esp)
+                  + _amp2x * np.sin(2*np.pi*_freq_rot*2*_t_esp))
+        _fonte_label = (f"Dataset Forzy · {_motor_esp} · "
+                        f"Acel RMS={_acel_rms:.3f} g · Vel RMS={_vel_rms:.3f} mm/s")
+    else:
+        _sinal = (_rng_esp.normal(0, 0.005, _janela_n)
+                  + 0.04*np.sin(2*np.pi*_freq_rot*_t_esp)
+                  + 0.01*np.sin(2*np.pi*_freq_rot*2*_t_esp))
+        _fonte_label = f"Simulado · {_motor_esp} · fs={_fs_est:.0f} Sa/s"
+
+    st.caption(_fonte_label)
+
+    # ── FFT ───────────────────────────────────────────────────────────────────
+    _sinal = _sinal - _sinal.mean()
+    _sinal_w = _sinal * np.hanning(len(_sinal))
+    _freqs = np.fft.rfftfreq(len(_sinal), d=1.0/_fs_est)
+    _amps  = np.abs(np.fft.rfft(_sinal_w)) * 2 / len(_sinal)
+    _idx_p = int(np.argmax(_amps[1:])) + 1
+    _freq_p = _freqs[_idx_p]
+    _amp_p  = _amps[_idx_p]
 
     fig_esp = go.Figure()
-    fig_esp.add_trace(go.Scatter(x=freqs, y=amplitudes, mode="lines", fill="tozeroy",
-        line=dict(color="#9b59b6",width=1.5), fillcolor="rgba(155,89,182,0.12)", name="Amplitude (g)"))
-    fig_esp.add_vline(x=freq_pico, line_dash="dash", line_color="#e74c3c",
-                      annotation_text=f"Pico: {freq_pico:.2f} Hz", annotation_font_color="#e74c3c")
-    if mostrar_harmonicas:
-        for h, cor, label in [(1,"#3498db","1x"),(2,"#2ecc71","2x"),(3,"#f39c12","3x"),(4,"#e67e22","4x")]:
-            fx = freq_rot * h
-            if fx < freqs[-1]:
-                fig_esp.add_vline(x=fx, line_dash="dot", line_color=cor, line_width=1,
-                                  annotation_text=f"{label} {fx:.1f}Hz", annotation_font_color=cor,
-                                  annotation_position="top")
-    if mostrar_bandas:
-        fig_esp.add_vrect(x0=freq_rot*0.4, x1=freq_rot*0.6, fillcolor="rgba(52,152,219,0.06)",
-                          annotation_text="Sub-harm.", annotation_font_size=10)
-        fig_esp.add_vrect(x0=freq_rot*0.9, x1=freq_rot*1.1, fillcolor="rgba(230,126,34,0.07)",
-                          annotation_text="Desbal.", annotation_font_size=10)
-    fig_esp.update_layout(title=f"Espectro FFT — {modo_esp} · {rpm} RPM · fs={fs} Sa/s",
-        xaxis_title="Frequência (Hz)", yaxis_title="Amplitude (g)", height=400,
+    fig_esp.add_trace(go.Scatter(x=_freqs, y=_amps, mode="lines", fill="tozeroy",
+        line=dict(color="#9b59b6", width=1.5), fillcolor="rgba(155,89,182,0.12)", name="Amplitude (g)"))
+    fig_esp.add_vline(x=_freq_p, line_dash="dash", line_color="#e74c3c",
+                      annotation_text=f"Pico: {_freq_p:.3f} Hz", annotation_font_color="#e74c3c")
+    if _mostrar_harm:
+        for _h, _cor, _lbl in [(1,"#3498db","1x"),(2,"#2ecc71","2x"),(3,"#f39c12","3x"),(4,"#e67e22","4x")]:
+            _fx = _freq_rot * _h
+            if _fx < _freqs[-1]:
+                fig_esp.add_vline(x=_fx, line_dash="dot", line_color=_cor, line_width=1,
+                                  annotation_text=f"{_lbl} {_fx:.1f}Hz",
+                                  annotation_font_color=_cor, annotation_position="top")
+    if _mostrar_bandas:
+        fig_esp.add_vrect(x0=_freq_rot*0.4, x1=_freq_rot*0.6,
+                          fillcolor="rgba(52,152,219,0.06)", annotation_text="Sub-harm.", annotation_font_size=10)
+        fig_esp.add_vrect(x0=_freq_rot*0.9, x1=_freq_rot*1.1,
+                          fillcolor="rgba(230,126,34,0.07)", annotation_text="Desbal.", annotation_font_size=10)
+    fig_esp.update_layout(
+        title=f"Espectro FFT — {_fonte_label}",
+        xaxis_title="Frequência (Hz)", yaxis_title="Amplitude (g)", height=420,
         margin=dict(l=50,r=30,t=60,b=50), paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)", font_color="#eee",
-        xaxis=dict(gridcolor="#222"), yaxis=dict(gridcolor="#222"), hovermode="x unified")
+        xaxis=dict(gridcolor="#1a2535"), yaxis=dict(gridcolor="#1a2535"), hovermode="x unified")
     st.plotly_chart(fig_esp, use_container_width=True, key="esp_fft")
 
-    m1,m2,m3,m4 = st.columns(4)
-    m1.metric("Pico dominante", f"{freq_pico:.2f} Hz")
-    m2.metric("Amplitude do pico", f"{amp_pico:.4f} g")
-    m3.metric("Freq. rotação (1x)", f"{freq_rot:.2f} Hz")
-    m4.metric("Relação pico/1x", f"{freq_pico/freq_rot:.2f}x")
+    _km1, _km2, _km3, _km4 = st.columns(4)
+    _km1.metric("Pico dominante",   f"{_freq_p:.3f} Hz")
+    _km2.metric("Amplitude do pico", f"{_amp_p:.4f} g")
+    _km3.metric("Freq. rotação (1x)", f"{_freq_rot:.2f} Hz")
+    _km4.metric("Relação pico/1x",  f"{_freq_p/_freq_rot:.2f}x" if _freq_rot else "—")
 
+    # ── Espectrograma com dataset real ────────────────────────────────────────
     st.divider()
     st.subheader("Espectrograma — Evolução Temporal")
 
-    n_frames = 30
-    frame_len = fs
-    sinal_long = _gerar_sinal(fs, n_frames, modo_esp, freq_rot)
-    Z = []
-    for i in range(n_frames):
-        seg = sinal_long[i*frame_len:(i+1)*frame_len]
-        seg -= seg.mean(); seg *= np.hanning(len(seg))
-        Z.append(np.abs(np.fft.rfft(seg)) * 2 / len(seg))
-    Z = np.array(Z)
-    f_ax = np.fft.rfftfreq(frame_len, 1.0/fs)
+    if _fonte_esp == "Dataset Forzy" and _df_esp is not None:
+        _n_frames_esp = min(40, len(_df_esp) // _janela_n)
+        _Z_esp, _t_labels = [], []
+        for _fi in range(_n_frames_esp):
+            _start = _fi * _janela_n
+            _seg = _df_esp[_col_acel].values[_start:_start+_janela_n].astype(float)
+            if len(_seg) < _janela_n: break
+            _seg -= _seg.mean(); _seg *= np.hanning(_janela_n)
+            _Z_esp.append(np.abs(np.fft.rfft(_seg)) * 2 / _janela_n)
+            _t_labels.append(str(_df_esp["timestamp"].iloc[_start].strftime("%H:%M:%S")))
+        _f_ax_esp = np.fft.rfftfreq(_janela_n, 1.0/_fs_est)
+    else:
+        _n_frames_esp = 30
+        _Z_esp = []
+        _t_labels = list(range(_n_frames_esp))
+        for _fi in range(_n_frames_esp):
+            _seg = _sinal_w if _fi == 0 else _sinal_w * (0.9 + 0.2*np.random.rand())
+            _Z_esp.append(np.abs(np.fft.rfft(_seg)) * 2 / len(_seg))
+        _f_ax_esp = _freqs
 
-    fig_wf = go.Figure(go.Heatmap(z=Z, x=f_ax, y=list(range(n_frames)), colorscale="Plasma",
-        colorbar=dict(title=dict(text="g",font=dict(color="#eee")),tickfont=dict(color="#eee")),
-        hovertemplate="Freq: %{x:.1f} Hz<br>t: %{y}s<br>Amp: %{z:.5f} g<extra></extra>"))
-    if mostrar_harmonicas:
-        for h, cor in [(1,"#3498db"),(2,"#2ecc71"),(3,"#f39c12")]:
-            fx = freq_rot * h
-            if fx < f_ax[-1]:
-                fig_wf.add_vline(x=fx, line_color=cor, line_width=1.5, line_dash="dot")
-    fig_wf.update_layout(xaxis_title="Frequência (Hz)", yaxis_title="Tempo (s)", height=350,
-                         margin=dict(l=50,r=20,t=20,b=50),
-                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#eee")
+    _Z_esp = np.array(_Z_esp)
+    fig_wf = go.Figure(go.Heatmap(
+        z=_Z_esp, x=_f_ax_esp, y=_t_labels,
+        colorscale="Plasma",
+        colorbar=dict(title=dict(text="g", font=dict(color="#eee")), tickfont=dict(color="#eee")),
+        hovertemplate="Freq: %{x:.2f} Hz<br>t: %{y}<br>Amp: %{z:.5f} g<extra></extra>"))
+    if _mostrar_harm:
+        for _h, _cor in [(1,"#3498db"),(2,"#2ecc71"),(3,"#f39c12")]:
+            _fx = _freq_rot * _h
+            if _fx < _f_ax_esp[-1]:
+                fig_wf.add_vline(x=_fx, line_color=_cor, line_width=1.5, line_dash="dot")
+    fig_wf.update_layout(
+        xaxis_title="Frequência (Hz)", yaxis_title="Tempo", height=380,
+        margin=dict(l=70,r=20,t=20,b=50),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#eee")
     st.plotly_chart(fig_wf, use_container_width=True, key="esp_wf")
 
     with st.expander("Top 10 picos espectrais"):
-        top_idx = np.argsort(amplitudes[1:])[::-1][:10] + 1
-        df_picos = pd.DataFrame({"Frequência (Hz)":freqs[top_idx].round(2),
-                                 "Amplitude (g)":amplitudes[top_idx].round(6),
-                                 "Relação 1x RPM":(freqs[top_idx]/freq_rot).round(2)})
-        st.dataframe(df_picos, use_container_width=True, hide_index=True)
+        _top_idx = np.argsort(_amps[1:])[::-1][:10] + 1
+        _df_picos = pd.DataFrame({
+            "Frequência (Hz)": _freqs[_top_idx].round(3),
+            "Amplitude (g)":   _amps[_top_idx].round(6),
+            "Relação 1x RPM":  (_freqs[_top_idx]/_freq_rot).round(2) if _freq_rot else 0,
+        })
+        st.dataframe(_df_picos, use_container_width=True, hide_index=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -389,7 +522,7 @@ with tab_oper:
             t_range = st.slider("Janela de tempo", min_value=t_min, max_value=t_max,
                                 value=(t_min,t_max), format="HH:mm:ss", key="oper_trange")
 
-        with st.expander("⚙️ Limiares ISO 10816", expanded=False):
+        with st.expander("Limiares ISO 10816", expanded=False):
             oc3,oc4,oc5,oc6,oc7,oc8 = st.columns(6)
             vel_alerta  = oc3.number_input("Vel. alerta",  value=1.8,  step=0.1, format="%.1f", key="oper_va")
             vel_alarme  = oc4.number_input("Vel. alarme",  value=4.5,  step=0.1, format="%.1f", key="oper_val")
@@ -407,7 +540,7 @@ with tab_oper:
         BADGE_O= {0:"#0d3320", 1:"#2e1f00", 2:"#2e0d0d"}
         PLOT_O = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font_color="#cdd9e5", margin=dict(l=50,r=20,t=30,b=40),
-                      xaxis=dict(gridcolor="#1a2d3a"), yaxis=dict(gridcolor="#1a2d3a"),
+                      xaxis=dict(gridcolor="#1a2d3a"),
                       hovermode="x unified")
 
         def _flag_o(v, a, al): return 2 if v>=al else 1 if v>=a else 0
@@ -421,8 +554,8 @@ with tab_oper:
         # Cards dos motores
         cc1, cc2 = st.columns(2)
         for col_w, prefix, nome, cor_n, fv, vel, acel, temp_, f_g in [
-            (cc1,"m1","⚙️ Motor 1","#3498db",_flag_o(v1,vel_alerta,vel_alarme),v1,a1,t1_,f1),
-            (cc2,"m2","⚙️ Motor 2","#e74c3c",_flag_o(v2,vel_alerta,vel_alarme),v2,a2,t2_,f2),
+            (cc1,"m1","Motor 1","#3498db",_flag_o(v1,vel_alerta,vel_alarme),v1,a1,t1_,f1),
+            (cc2,"m2","Motor 2","#e74c3c",_flag_o(v2,vel_alerta,vel_alarme),v2,a2,t2_,f2),
         ]:
             with col_w:
                 n_al = int((df_f[f"{prefix}_vel_flag"]==2).sum())
@@ -441,7 +574,7 @@ with tab_oper:
         st.divider()
 
         # Sub-tabs do Operacional
-        sub1, sub2, sub3, sub4, sub5 = st.tabs(["📈 Timeline","🔬 Análise","⚖️ Comparação","🚨 Eventos","📊 Estatísticas"])
+        sub1, sub2, sub3, sub4, sub5 = st.tabs(["Timeline","Análise","Comparação","Eventos","Estatísticas"])
 
         with sub1:
             fig_vel_o = go.Figure()
@@ -473,7 +606,8 @@ with tab_oper:
                         mode="lines", name=nome, line=dict(color=cor,width=1.3)))
                 fig_s.add_hline(y=la, line_dash="dot", line_color="#f39c12", line_width=1)
                 fig_s.add_hline(y=lal, line_dash="dot", line_color="#e74c3c", line_width=1)
-                fig_s.update_layout(height=220, title=f"{titulo} ({unidade})", **PLOT_O)
+                fig_s.update_layout(height=220, title=f"{titulo} ({unidade})", **PLOT_O,
+                                    yaxis=dict(gridcolor="#1a2d3a"))
                 with fig_col: st.plotly_chart(fig_s, use_container_width=True, key=f"oper_{titulo}")
 
         with sub2:
@@ -493,13 +627,13 @@ with tab_oper:
                 return fig
             vmax_g = max(vel_alarme*1.5, df_f.m1_vel.max()*1.1, df_f.m2_vel.max()*1.1)
             with cg1:
-                st.markdown("#### ⚙️ Motor 1")
+                st.markdown("#### Motor 1")
                 ga,gb,gc = st.columns(3)
                 ga.plotly_chart(_gauge_o(v1,"Velocidade",vmax_g,vel_alerta,vel_alarme,"mm/s"), use_container_width=True, key="oper_g1v")
                 gb.plotly_chart(_gauge_o(a1,"Aceleração",1.0,acel_alerta,acel_alarme,"g"), use_container_width=True, key="oper_g1a")
                 gc.plotly_chart(_gauge_o(t1_,"Temperatura",85,temp_alerta,temp_alarme,"°C"), use_container_width=True, key="oper_g1t")
             with cg2:
-                st.markdown("#### ⚙️ Motor 2")
+                st.markdown("#### Motor 2")
                 ga,gb,gc = st.columns(3)
                 ga.plotly_chart(_gauge_o(v2,"Velocidade",vmax_g,vel_alerta,vel_alarme,"mm/s"), use_container_width=True, key="oper_g2v")
                 gb.plotly_chart(_gauge_o(a2,"Aceleração",1.0,acel_alerta,acel_alarme,"g"), use_container_width=True, key="oper_g2a")
@@ -518,7 +652,7 @@ with tab_oper:
                 fig_trend.add_trace(go.Scattergl(x=ts_fut,y=y_fut,mode="lines",name=f"{nome} (tendência)",line=dict(color=cor,width=2,dash="dash")))
             fig_trend.add_hline(y=vel_alerta, line_dash="dot", line_color="#f39c12", line_width=1)
             fig_trend.add_hline(y=vel_alarme, line_dash="dot", line_color="#e74c3c", line_width=1)
-            fig_trend.update_layout(height=260, **PLOT_O)
+            fig_trend.update_layout(height=260, **PLOT_O, yaxis=dict(gridcolor="#1a2d3a"))
             st.plotly_chart(fig_trend, use_container_width=True, key="oper_trend")
 
         with sub3:
@@ -552,7 +686,7 @@ with tab_oper:
                                             ("acel",acel_alerta,acel_alarme,"g"),
                                             ("temp",temp_alerta,temp_alarme,"°C")]:
                     col_f, col_v = f"{prefix}_{var}_flag", f"{prefix}_{var}"
-                    for fval, tipo in [(2,"🚨 ALARME"),(1,"⚠️ Alerta")]:
+                    for fval, tipo in [(2,"ALARME"),(1,"Alerta")]:
                         pts = df_f[df_f[col_f]==fval]
                         if not pts.empty:
                             eventos.append({"Motor":nome,"Variável":var.capitalize(),"Tipo":tipo,
@@ -564,7 +698,7 @@ with tab_oper:
             if eventos:
                 st.dataframe(pd.DataFrame(eventos).sort_values(["Tipo","Motor"]), use_container_width=True, hide_index=True)
             else:
-                st.success("✅ Nenhum evento no período.")
+                st.success("Nenhum evento no período.")
 
         with sub5:
             stats_cols = {"M1 Vel (mm/s)":"m1_vel","M1 Acel (g)":"m1_acel","M1 Temp (°C)":"m1_temp",
@@ -573,7 +707,7 @@ with tab_oper:
                              "Desvio":df_f[col].std(),"P95":df_f[col].quantile(0.95)}
                      for label,col in stats_cols.items()}
             st.dataframe(pd.DataFrame(stats).T.round(4), use_container_width=True)
-            st.download_button("⬇️ Exportar CSV", df_f.to_csv(index=False).encode("utf-8"),
+            st.download_button("Exportar CSV", df_f.to_csv(index=False).encode("utf-8"),
                                "forzy_export.csv","text/csv", use_container_width=True)
 
 
@@ -613,9 +747,9 @@ with tab_hist:
         df_raw_h = _load_hist(str(csv_path_h))
 
         VARIAVEIS_H = {
-            "🚀 Velocidade": dict(col_m1="m1_vel",col_m2="m2_vel",unidade="mm/s",ylabel="Velocidade (mm/s)",lim_alerta=1.8,lim_alarme=4.5,fmt=".3f"),
-            "⚡ Aceleração": dict(col_m1="m1_acel",col_m2="m2_acel",unidade="g",ylabel="Aceleração (g)",lim_alerta=0.25,lim_alarme=0.45,fmt=".3f"),
-            "🌡️ Temperatura": dict(col_m1="m1_temp",col_m2="m2_temp",unidade="°C",ylabel="Temperatura (°C)",lim_alerta=35.0,lim_alarme=42.0,fmt=".1f"),
+            "Velocidade": dict(col_m1="m1_vel",col_m2="m2_vel",unidade="mm/s",ylabel="Velocidade (mm/s)",lim_alerta=1.8,lim_alarme=4.5,fmt=".3f"),
+            "Aceleração": dict(col_m1="m1_acel",col_m2="m2_acel",unidade="g",ylabel="Aceleração (g)",lim_alerta=0.25,lim_alarme=0.45,fmt=".3f"),
+            "Temperatura": dict(col_m1="m1_temp",col_m2="m2_temp",unidade="°C",ylabel="Temperatura (°C)",lim_alerta=35.0,lim_alarme=42.0,fmt=".1f"),
         }
 
         hc1, hc2, hc3 = st.columns(3)
@@ -681,7 +815,7 @@ with tab_hist:
                     dict(label="⏸  Pause",method="animate",args=[[None],{"frame":{"duration":0,"redraw":False},"mode":"immediate"}]),
                     dict(label="⏮  Reset",method="animate",args=[["1"],{"frame":{"duration":0,"redraw":True},"mode":"immediate"}]),
                 ], font=dict(size=14),bgcolor="#1e1e2e",bordercolor="#555")],
-            sliders=[dict(active=0,currentvalue=dict(prefix="⏱ ",visible=True,xanchor="center",font=dict(size=13)),
+            sliders=[dict(active=0,currentvalue=dict(prefix="T: ",visible=True,xanchor="center",font=dict(size=13)),
                           pad=dict(t=50,b=10),len=1.0,x=0,steps=steps_h)],
         )
 
@@ -689,7 +823,7 @@ with tab_hist:
                         use_container_width=True, key="hist_player")
 
         st.divider()
-        st.caption(f"📊 Estatísticas — {variavel_sel}")
+        st.caption(f"Estatísticas — {variavel_sel}")
         hk1,hk2,hk3,hk4,hk5,hk6 = st.columns(6)
         hk1.metric("M1 Máx",   f"{df_h[COL_M1_H].max():{cfg_h['fmt']}} {cfg_h['unidade']}")
         hk2.metric("M1 Média", f"{df_h[COL_M1_H].mean():{cfg_h['fmt']}} {cfg_h['unidade']}")

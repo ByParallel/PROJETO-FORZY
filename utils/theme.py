@@ -2,6 +2,54 @@
 import streamlit as st
 
 
+_NAV_HIDE_CSS = """
+<style>
+/* Oculta a navegação automática do Streamlit */
+[data-testid="stSidebarNav"] { display: none !important; }
+
+/* Nav customizada */
+.nav-section-label {
+    font-size: .62rem; font-weight: 700; letter-spacing: .12em;
+    color: #2a5a7a; text-transform: uppercase;
+    padding: 14px 14px 4px; margin: 0;
+}
+.nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-radius: 7px; cursor: pointer;
+    font-size: .84rem; font-weight: 500; color: #4a7a9b;
+    text-decoration: none; transition: all .15s;
+    margin: 1px 6px;
+}
+.nav-item:hover { background: #0f2035; color: #7ec8e3; }
+.nav-item.active {
+    background: linear-gradient(90deg,#0d2040,#0a1a35);
+    color: #7ec8e3 !important;
+    border-left: 3px solid #3498db;
+    padding-left: 11px;
+}
+.nav-sub {
+    margin-left: 18px; border-left: 1px solid #0f2a45;
+    padding-left: 4px; margin-bottom: 4px;
+}
+.nav-sub .nav-item {
+    font-size: .78rem; font-weight: 400; color: #3a6a8b;
+    padding: 6px 10px; margin: 0px 4px;
+}
+.nav-sub .nav-item:hover { color: #7ec8e3; background: #0a1a30; }
+.nav-sub .nav-item.active { color: #7ec8e3 !important; border-left: 2px solid #3498db; }
+.nav-divider { border: none; border-top: 1px solid #0f2035; margin: 6px 10px; }
+.nav-parent {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-radius: 7px;
+    font-size: .84rem; font-weight: 600; color: #4a7a9b;
+    margin: 1px 6px; cursor: default;
+    user-select: none;
+}
+.nav-parent.active { color: #7ec8e3; }
+</style>
+"""
+
+
 def apply():
     st.markdown("""
 <style>
@@ -68,16 +116,104 @@ hr { border-color:#0f2035 !important; margin:10px 0 !important; }
 
 
 def sidebar_header():
-    """Cabeçalho padrão da sidebar em todas as páginas."""
-    import streamlit as st
+    """Cabeçalho padrão da sidebar — mantido por compatibilidade. Use sidebar_nav()."""
     with st.sidebar:
         st.markdown("""
         <div style="padding:20px 16px 16px;border-bottom:1px solid #0f2035;margin-bottom:8px">
           <div style="font-size:1.05rem;font-weight:700;color:#e2eaf4;letter-spacing:.04em">
-            🏭 IMS · Forzy
+            IMS · Forzy
           </div>
           <div style="font-size:.7rem;color:#2a5a7a;margin-top:3px;letter-spacing:.06em;text-transform:uppercase">
             Industrial Monitoring System
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def sidebar_nav(current_page: str = ""):
+    """
+    Navegação lateral customizada com hierarquia pai-filho.
+    current_page: 'inicio' | 'dashboard' | 'scada' | 'iot'
+    """
+    st.markdown(_NAV_HIDE_CSS, unsafe_allow_html=True)
+
+    with st.sidebar:
+        # ── Logotipo ─────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="padding:20px 16px 16px;border-bottom:1px solid #0f2035;margin-bottom:10px">
+          <div style="font-size:1.08rem;font-weight:700;color:#e2eaf4;letter-spacing:.04em">
+            IMS · Forzy
+          </div>
+          <div style="font-size:.68rem;color:#2a5a7a;margin-top:3px;letter-spacing:.08em;text-transform:uppercase">
+            Industrial Monitoring System
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Início ───────────────────────────────────────────────────────────
+        _active = "active" if current_page == "inicio" else ""
+        st.markdown(f'<p class="nav-section-label">Principal</p>', unsafe_allow_html=True)
+        st.page_link("1_Inicio.py", label="Início", use_container_width=True)
+
+        # ── Dashboard (pai + filhos) ──────────────────────────────────────────
+        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+        st.markdown('<p class="nav-section-label">Análise</p>', unsafe_allow_html=True)
+
+        st.page_link("pages/2_Dashboard.py", label="Dashboard", use_container_width=True)
+
+        # Sub-itens: botões que setam tab e navegam
+        st.markdown('<div style="margin-left:14px;border-left:1px solid #0f2a45;padding-left:6px">', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:.65rem;color:#2a5a7a;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;margin:0">↳ Seções</p>', unsafe_allow_html=True)
+
+        _sub_css = """
+        <style>
+        div[data-testid="stSidebar"] .nav-sub-btn button {
+            background: transparent !important;
+            border: none !important;
+            color: #3a6a8b !important;
+            font-size: .78rem !important;
+            font-weight: 400 !important;
+            padding: 5px 8px !important;
+            text-align: left !important;
+            width: 100% !important;
+            border-radius: 5px !important;
+        }
+        div[data-testid="stSidebar"] .nav-sub-btn button:hover {
+            background: #0a1a30 !important;
+            color: #7ec8e3 !important;
+        }
+        </style>
+        """
+        st.markdown(_sub_css, unsafe_allow_html=True)
+
+        _DASH_TABS = [
+            (0, "Monitoramento"),
+            (1, "Espectral"),
+            (2, "Operacional"),
+            (3, "Histórico"),
+        ]
+        for _idx, _label in _DASH_TABS:
+            with st.container():
+                st.markdown('<div class="nav-sub-btn">', unsafe_allow_html=True)
+                if st.button(f"{_label}", key=f"_nav_dash_{_idx}", use_container_width=True):
+                    st.session_state["_dash_tab"] = _idx
+                    st.switch_page("pages/2_Dashboard.py")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── SCADA e IoT ──────────────────────────────────────────────────────
+        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+        st.markdown(f'<p class="nav-section-label">Planta & Sensores</p>', unsafe_allow_html=True)
+        st.page_link("pages/3_SCADA.py", label="SCADA", use_container_width=True)
+        st.page_link("pages/4_IoT.py",   label="IoT · ESP32", use_container_width=True)
+
+        # ── Rodapé ───────────────────────────────────────────────────────────
+        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+        st.markdown("""
+        <div style="padding:6px 16px 4px">
+          <div style="font-size:.62rem;color:#1e4060;letter-spacing:.05em">
+            Sprint 2 · Forzy–Promon · 2026
           </div>
         </div>
         """, unsafe_allow_html=True)
