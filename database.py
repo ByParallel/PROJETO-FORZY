@@ -132,4 +132,160 @@ def insert_leitura(ativo_id: str, dados: dict) -> int:
         return cur.lastrowid
 
 
+def init_db_sprint3():
+    """Tabelas novas do Sprint 3 — plantas, áreas, ativos industriais, logs."""
+    with _connect() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS plantas (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome      TEXT UNIQUE NOT NULL,
+                descricao TEXT,
+                criado_em TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS areas (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                planta_id INTEGER NOT NULL REFERENCES plantas(id),
+                nome      TEXT NOT NULL,
+                descricao TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ativos_industrial (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo               TEXT UNIQUE NOT NULL,
+                tag                  TEXT,
+                area_id              INTEGER REFERENCES areas(id),
+                descricao            TEXT,
+                fabricante           TEXT,
+                potencia_kw          REAL,
+                tensao_v             REAL,
+                corrente_nom         REAL,
+                ip_rating            TEXT,
+                status               TEXT DEFAULT 'ativo',
+                latitude             REAL,
+                longitude            REAL,
+                localizacao_descricao TEXT,
+                data_install         TEXT,
+                criado_em            TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS log_execucoes (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                automacao       TEXT,
+                status          TEXT,
+                registros_proc  INTEGER DEFAULT 0,
+                registros_erro  INTEGER DEFAULT 0,
+                detalhes        TEXT,
+                iniciado_em     TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS historico_atualizacoes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                tabela      TEXT,
+                operacao    TEXT,
+                dados_antes TEXT,
+                dados_depois TEXT,
+                ts          TEXT DEFAULT (datetime('now'))
+            );
+        """)
+
+
+# ── Consultas Sprint 3 ────────────────────────────────────────────────────────
+
+def get_plantas():
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM plantas ORDER BY nome").fetchall()]
+
+
+def get_areas(planta_id=None):
+    with _connect() as conn:
+        if planta_id:
+            rows = conn.execute("SELECT * FROM areas WHERE planta_id=? ORDER BY nome", (planta_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM areas ORDER BY nome").fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_ativos_industrial(area_id=None, status=None):
+    with _connect() as conn:
+        q = """SELECT a.*, ar.nome as area_nome, p.nome as planta_nome
+               FROM ativos_industrial a
+               LEFT JOIN areas ar ON a.area_id=ar.id
+               LEFT JOIN plantas p ON ar.planta_id=p.id"""
+        conds, params = [], []
+        if area_id:
+            conds.append("a.area_id=?"); params.append(area_id)
+        if status:
+            conds.append("a.status=?"); params.append(status)
+        if conds:
+            q += " WHERE " + " AND ".join(conds)
+        q += " ORDER BY a.codigo"
+        return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+
+def get_ativo_por_codigo(codigo):
+    with _connect() as conn:
+        row = conn.execute("""
+            SELECT a.*, ar.nome as area_nome, p.nome as planta_nome, p.id as planta_id
+            FROM ativos_industrial a
+            LEFT JOIN areas ar ON a.area_id=ar.id
+            LEFT JOIN plantas p ON ar.planta_id=p.id
+            WHERE a.codigo=?
+        """, (codigo,)).fetchone()
+        return dict(row) if row else None
+
+
+def criar_ativo_industrial(dados: dict):
+    cols = ["codigo","tag","area_id","descricao","fabricante","potencia_kw",
+            "tensao_v","corrente_nom","ip_rating","status","latitude","longitude",
+            "localizacao_descricao","data_install"]
+    vals = [dados.get(c) for c in cols]
+    ph   = ",".join(["?"]*len(cols))
+    with _connect() as conn:
+        conn.execute(f"INSERT INTO ativos_industrial ({','.join(cols)}) VALUES ({ph})", vals)
+        _log_hist(conn, "ativos_industrial", "INSERT", None, dados)
+
+
+def editar_ativo_industrial(codigo: str, dados: dict):
+    antes = get_ativo_por_codigo(codigo)
+    campos = ["tag","area_id","descricao","fabricante","potencia_kw","tensao_v",
+              "corrente_nom","ip_rating","status","latitude","longitude",
+              "localizacao_descricao","data_install"]
+    sets = ", ".join(f"{c}=?" for c in campos)
+    vals = [dados.get(c) for c in campos] + [codigo]
+    with _connect() as conn:
+        conn.execute(f"UPDATE ativos_industrial SET {sets} WHERE codigo=?", vals)
+        _log_hist(conn, "ativos_industrial", "UPDATE", antes, dados)
+
+
+def log_execucao(automacao, status, proc=0, erros=0, detalhes=""):
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO log_execucoes (automacao,status,registros_proc,registros_erro,detalhes) VALUES (?,?,?,?,?)",
+            (automacao, status, proc, erros, detalhes)
+        )
+
+
+def get_logs(limit=200):
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM log_execucoes ORDER BY iniciado_em DESC LIMIT ?", (limit,)
+        ).fetchall()]
+
+
+def get_historico(limit=200):
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM historico_atualizacoes ORDER BY ts DESC LIMIT ?", (limit,)
+        ).fetchall()]
+
+
+def _log_hist(conn, tabela, operacao, antes, depois):
+    conn.execute(
+        "INSERT INTO historico_atualizacoes (tabela,operacao,dados_antes,dados_depois) VALUES (?,?,?,?)",
+        (tabela, operacao, json.dumps(antes, default=str), json.dumps(depois, default=str))
+    )
+
+
 init_db()
+init_db_sprint3()

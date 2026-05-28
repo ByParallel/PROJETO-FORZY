@@ -151,40 +151,44 @@ def sidebar_nav(current_page: str = ""):
         """, unsafe_allow_html=True)
 
         # ── Início ───────────────────────────────────────────────────────────
-        _active = "active" if current_page == "inicio" else ""
-        st.markdown(f'<p class="nav-section-label">Principal</p>', unsafe_allow_html=True)
+        st.markdown('<p class="nav-section-label">Principal</p>', unsafe_allow_html=True)
         st.page_link("1_Inicio.py", label="Início", use_container_width=True)
 
-        # ── Dashboard (pai + filhos) ──────────────────────────────────────────
-        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
-        st.markdown('<p class="nav-section-label">Análise</p>', unsafe_allow_html=True)
-
-        st.page_link("pages/2_Dashboard.py", label="Dashboard", use_container_width=True)
-
-        # Sub-itens: botões que setam tab e navegam
-        st.markdown('<div style="margin-left:14px;border-left:1px solid #0f2a45;padding-left:6px">', unsafe_allow_html=True)
-        st.markdown('<p style="font-size:.65rem;color:#2a5a7a;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;margin:0">↳ Seções</p>', unsafe_allow_html=True)
-
-        _sub_css = """
+        # ── Sub-item CSS (links de texto, sem borda/fundo) ───────────────────
+        st.markdown("""
         <style>
-        div[data-testid="stSidebar"] .nav-sub-btn button {
+        div[data-testid="stSidebar"] .dash-subitem button {
             background: transparent !important;
             border: none !important;
+            box-shadow: none !important;
             color: #3a6a8b !important;
-            font-size: .78rem !important;
+            font-size: .80rem !important;
             font-weight: 400 !important;
-            padding: 5px 8px !important;
+            padding: 4px 10px 4px 28px !important;
             text-align: left !important;
             width: 100% !important;
             border-radius: 5px !important;
+            transition: color .15s !important;
         }
-        div[data-testid="stSidebar"] .nav-sub-btn button:hover {
+        div[data-testid="stSidebar"] .dash-subitem button:hover {
             background: #0a1a30 !important;
             color: #7ec8e3 !important;
         }
         </style>
-        """
-        st.markdown(_sub_css, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+
+        # ── Gestão industrial ─────────────────────────────────────────────────
+        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+        st.markdown('<p class="nav-section-label">Gestão</p>', unsafe_allow_html=True)
+        st.page_link("pages/5_Navegacao.py", label="Navegação", use_container_width=True)
+        st.page_link("pages/6_Cadastro.py",  label="Cadastro",  use_container_width=True)
+        st.page_link("pages/7_RPA.py",       label="RPA",       use_container_width=True)
+        st.page_link("pages/8_Pipeline.py",  label="Pipeline",  use_container_width=True)
+
+        # ── Dashboard (pai + filhos) ──────────────────────────────────────────
+        st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+        st.markdown('<p class="nav-section-label">Análise</p>', unsafe_allow_html=True)
+        st.page_link("pages/2_Dashboard.py", label="Dashboard", use_container_width=True)
 
         _DASH_TABS = [
             (0, "Monitoramento"),
@@ -194,26 +198,24 @@ def sidebar_nav(current_page: str = ""):
         ]
         for _idx, _label in _DASH_TABS:
             with st.container():
-                st.markdown('<div class="nav-sub-btn">', unsafe_allow_html=True)
-                if st.button(f"{_label}", key=f"_nav_dash_{_idx}", use_container_width=True):
+                st.markdown('<div class="dash-subitem">', unsafe_allow_html=True)
+                if st.button(_label, key=f"_nav_dash_{_idx}", use_container_width=True):
                     st.session_state["_dash_tab"] = _idx
                     st.switch_page("pages/2_Dashboard.py")
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
         # ── SCADA e IoT ──────────────────────────────────────────────────────
         st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
-        st.markdown(f'<p class="nav-section-label">Planta & Sensores</p>', unsafe_allow_html=True)
-        st.page_link("pages/3_SCADA.py", label="SCADA", use_container_width=True)
-        st.page_link("pages/4_IoT.py",   label="IoT · ESP32", use_container_width=True)
+        st.markdown('<p class="nav-section-label">Planta & Sensores</p>', unsafe_allow_html=True)
+        st.page_link("pages/3_SCADA.py", label="SCADA",    use_container_width=True)
+        st.page_link("pages/4_IoT.py",   label="IoT ESP32", use_container_width=True)
 
         # ── Rodapé ───────────────────────────────────────────────────────────
         st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
         st.markdown("""
         <div style="padding:6px 16px 4px">
           <div style="font-size:.62rem;color:#1e4060;letter-spacing:.05em">
-            Sprint 2 · Forzy–Promon · 2026
+            Sprint 3 · Forzy–Promon · 2026
           </div>
         </div>
         """, unsafe_allow_html=True)

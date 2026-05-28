@@ -1,8 +1,8 @@
 # IMS · Forzy — Industrial Monitoring System
 
-> **Sprint 2** — Dashboard consolidado, navegação customizada, monitoramento dual-motor em tempo real
+> **Sprint 3** — Gestão industrial completa: Navegação de planta, Cadastro de ativos, Automação RPA e Pipeline com OCR simulado
 
-Sistema de monitoramento industrial de bombas centrífugas construído com Python e Streamlit. Monitora 2 motores com dados históricos do dataset Forzy, análise espectral FFT, visualização SCADA 2D/3D e integração com ESP32 + MPU6050 em tempo real.
+Sistema de monitoramento industrial de bombas centrífugas construído com Python e Streamlit. Monitora 2 motores com dados históricos do dataset Forzy, análise espectral FFT, visualização SCADA 2D/3D, integração com ESP32 + MPU6050 em tempo real e gestão completa de ativos industriais.
 
 ---
 
@@ -39,41 +39,92 @@ Acesse: **http://localhost:8501**
 
 ---
 
-## Estrutura de Navegacao
+## Estrutura de Navegação
 
 ```
-Inicio
-Dashboard
-  Monitoramento   — Motor 1 e Motor 2 ao vivo (dataset ou simulado)
-  Espectral       — FFT + espectrograma parametrizado pelo dado real
-  Operacional     — Analise historica completa do dataset Forzy
-  Historico       — Player/timelapse animado
-SCADA             — Planta 2D + modelo 3D (STP real) com player
-IoT · ESP32       — Leitura ao vivo via USB-Serial
+PRINCIPAL
+  Início              — Hub central com KPIs, sparklines e log de eventos
+
+GESTÃO
+  Navegação           — Drill-down Planta > Área > Ativo com mapa
+  Cadastro            — CRUD completo de ativos industriais
+  RPA                 — Automação: associação TAG, status em lote, coleta, auditoria
+  Pipeline            — Execução de pipeline, mapeamento geral e simulação OCR
+
+ANÁLISE
+  Dashboard
+    Monitoramento     — Motor 1 e Motor 2 ao vivo (dataset ou simulado)
+    Espectral         — FFT + espectrograma parametrizado pelo dado real
+    Operacional       — Análise histórica completa do dataset Forzy
+    Histórico         — Player/timelapse animado
+
+PLANTA & SENSORES
+  SCADA               — Planta 2D + modelo 3D (STP real) com player
+  IoT ESP32           — Leitura ao vivo via USB-Serial
 ```
+
+---
+
+## Sprint 3 — Gestão Industrial
+
+### Navegação da Planta
+- Drill-down hierárquico: Planta → Área → Ativo
+- Card de detalhes do ativo selecionado (specs, status, localização)
+- Mapa interativo via `st.map()` com pins coloridos por status operacional
+- Últimas leituras do ativo exibidas inline
+
+### Cadastro de Ativos
+- Lista com filtros por planta, área, status e busca textual — exporta CSV
+- Formulário de criação com todos os campos de plaqueta (kW, V, A, IP, fabricante)
+- Formulário de edição com histórico automático de alterações
+- Coordenadas GPS opcionais (expander)
+
+### RPA — Automação
+- **Associação de TAGs**: vincula TAG + área em múltiplos ativos de uma vez
+- **Atualizar Status**: muda status operacional em lote com preview da mudança
+- **Coleta de Leitura**: simula coleta de sensores e persiste em `leituras`
+- **Log / Auditoria**: histórico completo de execuções e mudanças de dados
+
+### Pipeline
+- **Executar Pipeline**: sequência completa com barra de progresso e resumo
+- **Mapeamento**: mapa geral de todos os ativos filtrados por status/área
+- **Simulação OCR**: gera imagem de plaqueta → extrai campos → valida → aplica ao ativo
+
+---
+
+## Home — Hub Central
+
+A tela inicial atualiza em tempo real (2s / 5s / 10s) com dois modos:
+
+- **Dataset Forzy**: player por frames com barra de progresso, sparklines de janela deslizante
+- **Simulado**: geração contínua com cenários de falha (Normal, Desbalanceamento, Cavitação, Desalinhamento)
+
+Componentes da home:
+- KPI bar: Disponibilidade, Alarmes, Horas em operação, Tendência, Amostras
+- Cards de status Motor 1 / Motor 2 com sparklines (últimos 120 frames)
+- Log de eventos — transições de estado extraídas automaticamente do dataset
+- Ações rápidas: refresh, exportar CSV, navegação direta
 
 ---
 
 ## Dashboard Consolidado
 
 ### Monitoramento
-- Motor 1 e Motor 2 lado a lado com gauges (velocidade, aceleracao, temperatura)
+- Motor 1 e Motor 2 com gauges (velocidade, aceleração, temperatura)
 - Health score e banner de status ISO 10816 por motor
-- Graficos de historico recente (janela deslizante de 120 frames)
-- Fonte selecionavel: Dataset Forzy (player automatico) ou Simulado
-- Auto-refresh configuravel (intervalo + passo de frames)
+- Histórico recente em janela deslizante de 120 frames
+- Fonte selecionável: Dataset Forzy ou Simulado com cenários
 
 ### Espectral
-- FFT com fs=1000 Sa/s, amplitude parametrizada pelo RMS real do dataset
+- FFT com fs=1000 Sa/s, amplitude parametrizada pelo RMS real
 - Espectrograma por janelas sequenciais
-- Marcacao de harmonicas RPM e bandas de falha
-- Fonte: Dataset Forzy ou Simulado
+- Marcação de harmônicas RPM e bandas de falha
 
 ### Operacional
-- Timeline, analise estatistica, comparacao M1 x M2, eventos e anomalias
+- Timeline, análise estatística, comparação M1 × M2, eventos e anomalias
 
-### Historico
-- Player animado com controle de velocidade
+### Histórico
+- Player animado com controle de velocidade e scrubbing
 
 ---
 
@@ -83,21 +134,21 @@ IoT · ESP32       — Leitura ao vivo via USB-Serial
 ESP32-CAM (AI Thinker) — COM auto-detectada
 MPU6050 (I2C) → AX, AY, AZ (g) + GX, GY, GZ (dps)
 Taxa: 5 Sa/s (delay 200 ms no firmware)
-Saida serial: AX (g): 0.012 | AY (g): 0.974 | ...
+Saída serial: AX (g): 0.012 | AY (g): 0.974 | ...
 ```
 
-O coletor serial salva em `dados/dados_YYYY-MM-DD_HH-MM-SS.csv`. A pagina IoT le o CSV mais recente a cada 2s e remove o componente DC de gravidade antes de calcular o RMS dinamico.
+O coletor serial salva em `dados/dados_YYYY-MM-DD_HH-MM-SS.csv`. A página IoT lê o CSV mais recente a cada 2s e remove o componente DC de gravidade antes de calcular o RMS dinâmico.
 
-**Importante:** porta aberta com `rts=False, dtr=False` — caso contrario o ESP32 entra em modo bootloader.
+**Importante:** porta aberta com `rts=False, dtr=False` — caso contrário o ESP32 entra em modo bootloader.
 
 ---
 
-## Classificacao ISO 10816
+## Classificação ISO 10816
 
-| Zona | Velocidade RMS | Acao |
+| Zona | Velocidade RMS | Ação |
 |------|---------------|------|
-| Normal | < 1,8 mm/s | Operacao normal |
-| Alerta | 1,8 – 4,5 mm/s | Monitorar, planejar manutencao |
+| Normal | < 1,8 mm/s | Operação normal |
+| Alerta | 1,8 – 4,5 mm/s | Monitorar, planejar manutenção |
 | Alarme | > 4,5 mm/s | Parada imediata recomendada |
 
 ---
@@ -106,21 +157,21 @@ O coletor serial salva em `dados/dados_YYYY-MM-DD_HH-MM-SS.csv`. A pagina IoT le
 
 `data/forzy.csv` — separador `;`, `skiprows=3`
 
-| Coluna | Unidade | Descricao |
+| Coluna | Unidade | Descrição |
 |--------|---------|-----------|
-| timestamp | — | Data/hora da medicao |
+| timestamp | — | Data/hora da medição |
 | m1_vel | mm/s | Velocidade RMS Motor 1 |
-| m1_acel | g | Aceleracao RMS Motor 1 |
-| m1_temp | C | Temperatura Motor 1 |
+| m1_acel | g | Aceleração RMS Motor 1 |
+| m1_temp | °C | Temperatura Motor 1 |
 | m2_vel | mm/s | Velocidade RMS Motor 2 |
-| m2_acel | g | Aceleracao RMS Motor 2 |
-| m2_temp | C | Temperatura Motor 2 |
+| m2_acel | g | Aceleração RMS Motor 2 |
+| m2_temp | °C | Temperatura Motor 2 |
 
-Os valores sao RMS agregados (nao waveform bruto). A FFT espectral usa esses valores para parametrizar um sinal sintetico em 1000 Sa/s.
+Os valores são RMS agregados (~1 Sa/s). A FFT espectral usa esses valores para parametrizar um sinal sintético em 1000 Sa/s.
 
 ---
 
-## Licenca
+## Licença
 
-Projeto academico — uso livre para fins educacionais.  
-Sprint 2 · Forzy–Promon · 2026
+Projeto acadêmico — uso livre para fins educacionais.  
+Sprint 3 · Forzy–Promon · 2026
